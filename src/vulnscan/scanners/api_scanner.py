@@ -58,12 +58,34 @@ _EVAL_PAYLOADS = [
 ]
 
 # SQL injection — error-based detection
-_SQLI_PAYLOADS = ["'", "\"", "' OR '1'='1", "1; DROP TABLE--", "1 UNION SELECT NULL--"]
+# Only match unambiguous DB error strings, never match on plain HTML pages
+_SQLI_PAYLOADS = ["'", "\"", "' OR '1'='1", "1 UNION SELECT NULL--"]
 _SQLI_ERRORS = re.compile(
-    r"sql|syntax error|mysql|sqlite|postgresql|ora-|jdbc|odbc|"
-    r"unterminated quoted|you have an error in your sql",
+    r"you have an error in your sql syntax|"
+    r"unclosed quotation mark after the character string|"
+    r"quoted string not properly terminated|"
+    r"pg_query\(\)|pg::syntaxerror|"
+    r"sqlite3\.operationalerror|"
+    r"ora-\d{4,5}:|"
+    r"microsoft ole db provider for sql server|"
+    r"jdbc\.SQLException|"
+    r"syntax error at or near|"
+    r"unterminated quoted identifier",
     re.IGNORECASE,
 )
+
+def _is_sqli_response(r: httpx.Response) -> bool:
+    """Return True only if the response looks like a real DB error, not HTML."""
+    ct = r.headers.get("content-type", "")
+    if "text/html" in ct:
+        return False   # HTML is almost always a SPA fallback or error page
+    if r.status_code not in (400, 422, 500, 502, 503):
+        return False   # 200 with SQLi payload → probably not vulnerable
+    return bool(_SQLI_ERRORS.search(r.text))
+
+
+def _not_html(r: httpx.Response) -> bool:
+    return "text/html" not in r.headers.get("content-type", "")
 
 # Path traversal
 _TRAVERSAL_PAYLOADS = ["../../../etc/passwd", "..%2F..%2F..%2Fetc%2Fpasswd"]
@@ -197,7 +219,7 @@ def _test_endpoint(
             test_url = base + test_path
             try:
                 r = _make_request(client, method, test_url, {})
-                if _CMD_DETECTION.search(r.text):
+                if _not_html(r) and _CMD_DETECTION.search(r.text):
                     findings.append(_finding(
                         test_url,
                         f"OS Command Injection in path parameter `{pname}`",
@@ -218,7 +240,7 @@ def _test_endpoint(
             test_url = base + test_path
             try:
                 r = _make_request(client, method, test_url, {})
-                if expected in r.text:
+                if _not_html(r) and expected in r.text:
                     findings.append(_finding(
                         test_url,
                         f"Code Injection (eval) in path parameter `{pname}`",
@@ -262,7 +284,7 @@ def _test_endpoint(
         for payload in _CMD_PAYLOADS:
             try:
                 r = _make_request(client, method, full_url, {pname: payload})
-                if _CMD_DETECTION.search(r.text):
+                if _not_html(r) and _CMD_DETECTION.search(r.text):
                     findings.append(_finding(
                         full_url,
                         f"OS Command Injection in query parameter `{pname}`",
@@ -281,7 +303,7 @@ def _test_endpoint(
         for expr, expected in _EVAL_PAYLOADS:
             try:
                 r = _make_request(client, method, full_url, {pname: expr})
-                if expected in r.text:
+                if _not_html(r) and expected in r.text:
                     findings.append(_finding(
                         full_url,
                         f"Code Injection (eval) in query parameter `{pname}`",
@@ -300,7 +322,7 @@ def _test_endpoint(
         for payload in _SQLI_PAYLOADS:
             try:
                 r = _make_request(client, method, full_url, {pname: payload})
-                if _SQLI_ERRORS.search(r.text):
+                if _is_sqli_response(r):
                     findings.append(_finding(
                         full_url,
                         f"SQL Injection in query parameter `{pname}`",
