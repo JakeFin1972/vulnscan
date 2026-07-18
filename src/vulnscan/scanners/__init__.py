@@ -6,7 +6,7 @@ the underlying tool is not installed or not running.
 from __future__ import annotations
 
 from .base import DynamicFinding, TargetType, ScanTool
-from . import nmap_scanner, zap_scanner, openvas_scanner, mcp_scanner, http_scanner
+from . import nmap_scanner, zap_scanner, openvas_scanner, mcp_scanner, http_scanner, api_scanner
 
 
 def tool_status() -> dict[str, dict]:
@@ -16,6 +16,8 @@ def tool_status() -> dict[str, dict]:
                     "description": "Port/service/OS/vuln detection (requires nmap binary)"},
         "http":    {"available": True,
                     "description": "HTTP security header, cookie, TLS and sensitive-path checks (built-in)"},
+        "api":     {"available": True,
+                    "description": "REST API security scanner: discovers OpenAPI spec and tests for injection, XXE, auth bypass (built-in)"},
         "zap":     {"available": zap_scanner.is_available(),
                     "description": "DAST web app scanner (requires ZAP daemon)"},
         "openvas": {"available": openvas_scanner.is_available(),
@@ -42,7 +44,7 @@ def run_dynamic_scan(
     # Default tool selection by target type
     if tools is None:
         if target_type == "url":
-            tools = ["http", "nmap", "mcp"]
+            tools = ["http", "api", "nmap", "mcp"]
         elif target_type == "host":
             tools = ["nmap", "openvas"]
         elif target_type == "mcp":
@@ -63,6 +65,10 @@ def run_dynamic_scan(
         elif tool == "http":
             url = target if target.startswith("http") else f"http://{target}"
             findings.extend(http_scanner.scan(url, options=tool_opts))
+
+        elif tool == "api":
+            url = target if target.startswith("http") else f"http://{target}"
+            findings.extend(api_scanner.scan(url, options=tool_opts))
 
         elif tool == "zap":
             if target_type not in ("url",):
