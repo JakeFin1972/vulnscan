@@ -42,6 +42,8 @@ from typing import Annotated, Any
 import yaml
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from .easm import parse_file as _easm_parse_file, score_vulnerabilities as _easm_score
@@ -60,6 +62,9 @@ _DB_PATH = _DATA_DIR / "scans.db"
 
 _BUILTIN_DEFS_DIR = Path(__file__).parent / "languages" / "defs"
 _DEFS_DIR = Path(os.environ.get("VULNSCAN_DEFS_DIR", _BUILTIN_DEFS_DIR))
+
+# Optional: pre-built React UI to serve as static files
+_UI_DIR = Path(os.environ.get("VULNSCAN_UI_DIR", "")) if os.environ.get("VULNSCAN_UI_DIR") else None
 
 # ── Database ───────────────────────────────────────────────────────────────────
 
@@ -322,6 +327,18 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve pre-built React UI when VULNSCAN_UI_DIR is set (production / Docker)
+if _UI_DIR and _UI_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_UI_DIR / "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        """Return index.html for all non-API routes so React Router works."""
+        index = _UI_DIR / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        raise HTTPException(status_code=404, detail="UI not found")
 
 
 # ── Request / response models ──────────────────────────────────────────────────

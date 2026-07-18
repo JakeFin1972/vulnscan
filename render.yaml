@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: vulnscan
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: VULNSCAN_DATA_DIR
+        value: /data
+      - key: VULNSCAN_UI_DIR
+        value: /app/ui/dist
+    disk:
+      name: vulnscan-data
+      mountPath: /data
+      sizeGB: 1
