@@ -124,14 +124,21 @@ def scan(url: str, options: dict[str, Any] | None = None) -> list[DynamicFinding
             remediation="Add a Content-Security-Policy header. Start with: "
                         "Content-Security-Policy: default-src 'self'",
         ))
-    elif "unsafe-inline" in csp and "script-src" in csp:
-        findings.append(_finding(
-            final_url, "CSP allows unsafe-inline scripts",
-            "The Content-Security-Policy includes 'unsafe-inline' for script-src, "
-            "which negates XSS protection.",
-            "medium", "weak_security_header",
-            remediation="Remove 'unsafe-inline' from script-src. Use nonces or hashes instead.",
-        ))
+    else:
+        # Parse directives to check script-src specifically
+        csp_directives = {
+            d.strip().split()[0].lower(): d.strip()
+            for d in csp.split(";") if d.strip()
+        }
+        script_src = csp_directives.get("script-src", csp_directives.get("default-src", ""))
+        if "'unsafe-inline'" in script_src:
+            findings.append(_finding(
+                final_url, "CSP allows unsafe-inline scripts",
+                "The Content-Security-Policy includes 'unsafe-inline' for script-src, "
+                "which negates XSS protection.",
+                "medium", "weak_security_header",
+                remediation="Remove 'unsafe-inline' from script-src. Use nonces or hashes instead.",
+            ))
 
     # ── 5. X-Frame-Options ────────────────────────────────────────────────────
     xfo = headers.get("x-frame-options")
