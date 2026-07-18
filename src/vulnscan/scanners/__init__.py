@@ -6,7 +6,7 @@ the underlying tool is not installed or not running.
 from __future__ import annotations
 
 from .base import DynamicFinding, TargetType, ScanTool
-from . import nmap_scanner, zap_scanner, openvas_scanner, mcp_scanner
+from . import nmap_scanner, zap_scanner, openvas_scanner, mcp_scanner, http_scanner
 
 
 def tool_status() -> dict[str, dict]:
@@ -14,11 +14,13 @@ def tool_status() -> dict[str, dict]:
     return {
         "nmap":    {"available": nmap_scanner.is_available(),
                     "description": "Port/service/OS/vuln detection (requires nmap binary)"},
+        "http":    {"available": True,
+                    "description": "HTTP security header, cookie, TLS and sensitive-path checks (built-in)"},
         "zap":     {"available": zap_scanner.is_available(),
                     "description": "DAST web app scanner (requires ZAP daemon)"},
         "openvas": {"available": openvas_scanner.is_available(),
                     "description": "Full vulnerability assessment (requires GVM daemon)"},
-        "mcp":     {"available": True,  # always available — uses httpx
+        "mcp":     {"available": True,
                     "description": "MCP server security probe (built-in, no external tool needed)"},
     }
 
@@ -40,7 +42,7 @@ def run_dynamic_scan(
     # Default tool selection by target type
     if tools is None:
         if target_type == "url":
-            tools = ["zap", "nmap", "mcp"]
+            tools = ["http", "nmap", "mcp"]
         elif target_type == "host":
             tools = ["nmap", "openvas"]
         elif target_type == "mcp":
@@ -55,13 +57,15 @@ def run_dynamic_scan(
         if tool == "nmap":
             profile = tool_opts.get("profile", "standard")
             extra   = tool_opts.get("extra_args", [])
-            # For URL targets extract the hostname
             host = _url_to_host(target) if target_type == "url" else target
             findings.extend(nmap_scanner.scan(host, profile=profile, extra_args=extra))
 
+        elif tool == "http":
+            url = target if target.startswith("http") else f"http://{target}"
+            findings.extend(http_scanner.scan(url, options=tool_opts))
+
         elif tool == "zap":
             if target_type not in ("url",):
-                # For host targets synthesize a URL
                 url = target if target.startswith("http") else f"http://{target}"
             else:
                 url = target

@@ -12,7 +12,7 @@ RUN npm run build
 FROM python:3.12-slim AS runtime
 
 # System deps (tree-sitter needs a C compiler at install time)
-RUN apt-get update && apt-get install -y --no-install-recommends gcc && \
+RUN apt-get update && apt-get install -y --no-install-recommends gcc nmap && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

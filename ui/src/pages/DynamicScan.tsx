@@ -217,7 +217,7 @@ function ScanRow({
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const TOOLS_BY_TYPE: Record<TargetType, ScanTool[]> = {
-  url:  ['zap', 'nmap', 'mcp'],
+  url:  ['http', 'nmap', 'mcp'],
   host: ['nmap', 'openvas'],
   mcp:  ['mcp'],
 }
@@ -295,7 +295,7 @@ export default function DynamicScanPage() {
     )
   }
 
-  const allTools: ScanTool[] = ['nmap', 'zap', 'openvas', 'mcp']
+  const allTools: ScanTool[] = ['http', 'nmap', 'zap', 'openvas', 'mcp']
 
   const sevCounts = findings.reduce<Record<string, number>>((acc, f) => {
     acc[f.severity] = (acc[f.severity] ?? 0) + 1
