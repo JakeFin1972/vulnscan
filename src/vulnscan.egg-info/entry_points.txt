@@ -1,0 +1,3 @@
+[console_scripts]
+vulnscan-recon = vulnscan.recon:main
+vulnscan-runtest = vulnscan.harness:main

@@ -1,0 +1,156 @@
+name: csharp
+extensions: [".cs"]
+grammar: tree_sitter_c_sharp
+
+# Sources — attacker-reachable entry points
+sources:
+  # ASP.NET controller actions with explicit HTTP-verb attributes
+  - id: http_attribute_action
+    category: http_handler
+    match:
+      node: method_declaration
+      has_attribute: [HttpGet, HttpPost, HttpPut, HttpDelete, HttpPatch, HttpHead, Route]
+
+  # Public methods in a class that explicitly derives from ControllerBase
+  - id: controller_base_public_action
+    category: http_handler
+    match:
+      node: method_declaration
+      in_class_deriving: [ControllerBase]
+      is_public: true
+
+  # Public methods in a class whose base name ends with "Controller" (convention)
+  - id: controller_convention_public_action
+    category: http_handler
+    match:
+      node: method_declaration
+      in_class_deriving_endswith: [Controller]
+      is_public: true
+
+  # Public methods in a class decorated with [ApiController] or [Controller]
+  - id: controller_attribute_public_action
+    category: http_handler
+    match:
+      node: method_declaration
+      has_class_attribute: [ApiController, Controller]
+      is_public: true
+
+  # Razor Pages handler methods (OnGet, OnPost, …)
+  - id: razor_handler
+    category: razor_handler
+    match:
+      node: method_declaration
+      name_startswith: [OnGet, OnPost, OnPut, OnDelete]
+
+  # ASP.NET Minimal API route registrations
+  - id: minimal_api
+    category: http_handler
+    match:
+      node: invocation_expression
+      callee_leaf_in: [MapGet, MapPost, MapPut, MapDelete, MapPatch, MapMethods]
+
+# Sinks — dangerous operations
+sinks:
+  # ADO.NET / EF Core raw SQL execution
+  - id: sql_exec
+    category: sql_query
+    match:
+      node: invocation_expression
+      callee_leaf_in:
+        - ExecuteReader
+        - ExecuteNonQuery
+        - ExecuteScalar
+        - ExecuteReaderAsync
+        - ExecuteNonQueryAsync
+        - ExecuteScalarAsync
+        - ExecuteSqlRaw
+        - ExecuteSqlRawAsync
+        - FromSqlRaw
+        - SqlQueryRaw
+
+  # SqlCommand constructor
+  - id: sql_new
+    category: sql_query
+    match:
+      node: object_creation_expression
+      type_in: [SqlCommand]
+
+  # OS command execution
+  - id: os_command
+    category: os_command
+    match:
+      node: invocation_expression
+      callee_dotted_endswith: [Process.Start]
+
+  # Dangerous deserializers (method call)
+  - id: unsafe_deser_call
+    category: unsafe_deser
+    match:
+      node: invocation_expression
+      callee_leaf_in: [Deserialize]
+
+  # Dangerous deserializer constructors
+  - id: unsafe_deser_new
+    category: unsafe_deser
+    match:
+      node: object_creation_expression
+      type_in:
+        - BinaryFormatter
+        - NetDataContractSerializer
+        - LosFormatter
+        - ObjectStateFormatter
+        - SoapFormatter
+
+  # XXE-prone XML reader
+  - id: xxe_new
+    category: xxe_candidate
+    match:
+      node: object_creation_expression
+      type_in: [XmlTextReader]
+
+  # File system access
+  - id: file_access
+    category: file_access
+    match:
+      node: invocation_expression
+      callee_leaf_in:
+        - ReadAllText
+        - WriteAllText
+        - ReadAllBytes
+        - WriteAllBytes
+        - OpenRead
+        - OpenWrite
+
+  # Path manipulation (traversal candidate)
+  - id: path_combine
+    category: path_traversal_candidate
+    match:
+      node: invocation_expression
+      callee_dotted_endswith: [Path.Combine]
+
+  # SSRF candidates
+  - id: ssrf
+    category: ssrf_candidate
+    match:
+      node: invocation_expression
+      callee_leaf_in: [GetAsync, GetStringAsync, GetByteArrayAsync]
+
+  # Reflection
+  - id: reflection_create
+    category: reflection
+    match:
+      node: invocation_expression
+      callee_leaf_in: [CreateInstance]
+
+  - id: reflection_load
+    category: reflection
+    match:
+      node: invocation_expression
+      callee_dotted_endswith: [Assembly.Load]
+
+  # Open redirect
+  - id: open_redirect
+    category: open_redirect_candidate
+    match:
+      node: invocation_expression
+      callee_leaf_in: [Redirect]

@@ -1,0 +1,96 @@
+Metadata-Version: 2.4
+Name: vulnscan
+Version: 0.1.0
+Summary: Forward-taint adversarial vulnerability scanner — recon helper + Claude Code skill
+License: Apache-2.0
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: tree-sitter>=0.25
+Requires-Dist: tree-sitter-c-sharp>=0.23
+Provides-Extra: dev
+Requires-Dist: pytest>=8; extra == "dev"
+
+# vulnscan
+
+A standalone, attacker-first source-code vulnerability scanner. Traces
+attacker-reachable entry points forward to dangerous sinks, then **adversarially
+falsifies every candidate** before reporting — so what reaches you is a short
+list of defensible findings, not a wall of maybes.
+
+The analysis brain is a Claude Code skill (Opus-class model). A small Python CLI
+does Phase-1 recon and hands the skill a focused starting map.
+
+**Languages:** Python (stdlib AST) and C#/.NET (tree-sitter).
+
+## Authorized use only
+
+Defensive tooling for code **you own or are explicitly authorized to test**. The
+skill confirms authorization before scanning and scopes reproductions to the
+minimum a code owner needs to confirm a finding on their own system — not
+turnkey exploits. Don't point it at systems you don't have permission to test.
+
+## Layout
+
+```
+pyproject.toml           # installable package + console scripts
+install.sh / uninstall.sh
+skills/
+  vulnscan/              # scanner: recon -> hunt -> disprove -> report
+  vulnscan-fix/          # TDD remediation: RED -> GREEN -> review
+  vulnscan-verify/       # independent, read-only check of a fix (no rubber-stamp)
+src/vulnscan/
+  recon.py               # Phase-1 recon orchestrator + CLI (vulnscan-recon)
+  harness.py             # deterministic single-test runner (vulnscan-runtest)
+  languages/             # pluggable per-language backends
+    python_backend.py    #   Python (stdlib AST)
+    csharp_backend.py    #   C#/.NET (tree-sitter)
+    base.py / __init__.py
+tests/                   # pytest: recon, C#, harness RED->GREEN cycle
+```
+
+## Install
+
+```bash
+./install.sh
+# installs all skills/ -> ~/.claude/skills/  and  pip install -e .
+# (in an externally-managed env, add --break-system-packages to the pip line)
+```
+
+## Run (end to end)
+
+```bash
+# 1. Recon seed — fast, narrows where the model looks
+vulnscan-recon /path/to/authorized/repo --json recon.json
+
+# 2. Full analysis — inside Claude Code on Opus
+claude --model opus
+#   then, in the session:
+/vulnscan
+```
+
+The scanner reads `recon.json` for its candidate map, runs the Hunt → Disprove →
+Report loop, and emits findings in the JSON schema defined in `SKILL.md`. Zero
+survivors is a valid, honest result.
+
+## Test
+
+```bash
+pip install -e ".[dev]"   # add --break-system-packages if needed
+python -m pytest -q
+```
+
+## Build order from here
+
+1. **More languages.** Python and C#/.NET ship today via the pluggable
+   `languages/` backends. Add JS/TS, Java, or Go by dropping in a new backend
+   module (same `scan_file(path) -> list[Hit]` contract) and registering it.
+2. **Fix skill.** Turn a survivor into a failing security test (RED) → minimal
+   fix (GREEN) → reviewable diff.
+3. **Independent verifier.** A separate, read-only skill that re-checks a fix
+   with no shared state, so it can't rubber-stamp itself.
+
+## Provenance
+
+Clean-room design inspired by the public method Capital One described in their
+open-source VulnHunter. Phase names, schema, recon heuristics, and falsification
+kill-conditions here are original — not a fork. Apache-2.0.
