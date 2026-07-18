@@ -651,7 +651,12 @@ def list_dynamic_scans():
             "SELECT id, target, target_type, tools, status, created_at, finished_at, finding_count, error "
             "FROM dynamic_scans ORDER BY created_at DESC"
         ).fetchall()
-    return [dict(r) for r in rows]
+    result = []
+    for r in rows:
+        d = dict(r)
+        d["tools"] = json.loads(d["tools"]) if isinstance(d["tools"], str) else d["tools"]
+        result.append(d)
+    return result
 
 
 @app.get("/dynamic-scans/{scan_id}")
@@ -662,7 +667,9 @@ def get_dynamic_scan(scan_id: str):
         ).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="Dynamic scan not found")
-    return dict(row)
+    d = dict(row)
+    d["tools"] = json.loads(d["tools"]) if isinstance(d["tools"], str) else d["tools"]
+    return d
 
 
 @app.get("/dynamic-findings")
