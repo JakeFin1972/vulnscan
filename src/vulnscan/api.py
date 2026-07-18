@@ -328,21 +328,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Serve pre-built React UI when VULNSCAN_UI_DIR is set (production / Docker)
-if _UI_DIR and _UI_DIR.is_dir():
-    app.mount("/assets", StaticFiles(directory=str(_UI_DIR / "assets")), name="assets")
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    def spa_fallback(full_path: str):
-        """Return index.html for all non-API routes so React Router works."""
-        if full_path.startswith("api/") or full_path == "api":
-            raise HTTPException(status_code=404, detail="Not found")
-        index = _UI_DIR / "index.html"
-        if index.exists():
-            return FileResponse(str(index))
-        raise HTTPException(status_code=404, detail="UI not found")
-
-
 # ── Request / response models ──────────────────────────────────────────────────
 
 class StartScanRequest(BaseModel):
@@ -1204,6 +1189,20 @@ def easm_dashboard():
         "grade_distribution": grade_dist,
         "top_critical_open": [dict(r) for r in top_critical],
     }
+
+
+# ── Serve pre-built React UI (must be registered AFTER all API routes) ─────────
+
+if _UI_DIR and _UI_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(_UI_DIR / "assets")), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        """Return index.html for all non-API routes so React Router works."""
+        index = _UI_DIR / "index.html"
+        if index.exists():
+            return FileResponse(str(index))
+        raise HTTPException(status_code=404, detail="UI not found")
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
