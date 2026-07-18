@@ -33,4 +33,4 @@ EXPOSE 8765
 # Persistent data directory (mount a volume here on Render/Fly)
 RUN mkdir -p /data
 
-CMD ["uvicorn", "vulnscan.api:app", "--host", "0.0.0.0", "--port", "8765"]
+CMD ["sh", "-c", "uvicorn vulnscan.api:app --host 0.0.0.0 --port ${PORT:-8765}"]
