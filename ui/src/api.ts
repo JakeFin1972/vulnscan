@@ -18,7 +18,13 @@ import type {
 } from './types'
 
 function getBaseUrl(): string {
-  return localStorage.getItem('vulnscan_api_url') ?? 'http://localhost:8765'
+  const stored = localStorage.getItem('vulnscan_api_url')
+  if (stored) return stored
+  // In production the UI is served by the same FastAPI process — use relative URLs
+  if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    return ''
+  }
+  return 'http://localhost:8765'
 }
 
 async function request<T>(

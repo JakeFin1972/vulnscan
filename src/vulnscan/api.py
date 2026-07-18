@@ -335,6 +335,8 @@ if _UI_DIR and _UI_DIR.is_dir():
     @app.get("/{full_path:path}", include_in_schema=False)
     def spa_fallback(full_path: str):
         """Return index.html for all non-API routes so React Router works."""
+        if full_path.startswith("api/") or full_path == "api":
+            raise HTTPException(status_code=404, detail="Not found")
         index = _UI_DIR / "index.html"
         if index.exists():
             return FileResponse(str(index))
