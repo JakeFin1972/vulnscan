@@ -63,9 +63,16 @@ def test_red_then_green_cycle(tmp_path):
 
 
 def test_missing_toolchain_is_reported_not_crashed(tmp_path):
+    import shutil
     (tmp_path / "x.py").write_text("", encoding="utf-8")
     res = run_test(tmp_path, "SomeFilter", framework="dotnet")
-    # No dotnet SDK here -> structured error, no exception.
+    # Either dotnet is absent (FileNotFoundError path) or present but fails
+    # (e.g. CI runners have the dotnet SDK installed).
     assert res["passed"] is False
-    assert res["returncode"] is None
-    assert "toolchain not found" in (res["error"] or "")
+    if shutil.which("dotnet") is None:
+        # Binary not found — harness returns structured error with no returncode
+        assert res["returncode"] is None
+        assert "toolchain not found" in (res["error"] or "")
+    else:
+        # dotnet found but no project → non-zero returncode, no exception raised
+        assert res["returncode"] is not None
