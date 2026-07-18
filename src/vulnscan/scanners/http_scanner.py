@@ -238,15 +238,12 @@ def _finding(
     remediation: str | None = None,
     evidence: str | None = None,
 ) -> DynamicFinding:
-    import uuid, datetime
     return DynamicFinding(
-        id=str(uuid.uuid4()),
-        scan_id="",        # filled in by the caller
         tool=TOOL,
         target=url,
         name=name,
         description=description,
-        severity=severity,
+        severity=severity,  # type: ignore[arg-type]
         category=category,
         evidence=evidence or "",
         url=url,
