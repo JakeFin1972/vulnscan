@@ -1,5 +1,7 @@
 # vulnscan
 
+**GitHub:** https://github.com/JakeFin1972/vulnscan
+
 A standalone, attacker-first source-code vulnerability scanner. Traces
 attacker-reachable entry points forward to dangerous sinks, then **adversarially
 falsifies every candidate** before reporting — so what reaches you is a short
