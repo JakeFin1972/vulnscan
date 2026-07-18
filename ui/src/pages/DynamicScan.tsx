@@ -10,6 +10,10 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  AlertTriangle,
+  GitBranch,
+  Zap,
+  Wrench,
 } from 'lucide-react'
 import {
   listScanners,
@@ -73,10 +77,27 @@ function TargetIcon({ type }: { type: string }) {
 
 // ── Finding row ───────────────────────────────────────────────────────────────
 
+function DetailSection({ icon: Icon, title, children }: {
+  icon: React.ComponentType<{ className?: string }>
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-lg border border-slate-700/60 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/60 border-b border-slate-700/60">
+        <Icon className="h-3.5 w-3.5 text-slate-400" />
+        <span className="text-xs font-medium text-slate-300 uppercase tracking-wide">{title}</span>
+      </div>
+      <div className="p-3">{children}</div>
+    </div>
+  )
+}
+
 function FindingRow({ f }: { f: DynamicFinding }) {
   const [open, setOpen] = useState(false)
   return (
-    <div className="border border-slate-800 rounded bg-slate-900">
+    <div className={cn('border rounded overflow-hidden transition-colors', open ? 'border-slate-600 bg-slate-900' : 'border-slate-800 bg-slate-900/50')}>
+      {/* Summary row */}
       <button
         className="w-full flex items-start gap-3 p-3 text-left hover:bg-slate-800/50 transition-colors"
         onClick={() => setOpen(v => !v)}
@@ -84,49 +105,70 @@ function FindingRow({ f }: { f: DynamicFinding }) {
         <span className={cn('mt-1 h-2 w-2 rounded-full flex-shrink-0', SEV_DOT[f.severity] ?? SEV_DOT.info)} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-slate-200 truncate">{f.name}</span>
             <SeverityBadge sev={f.severity} />
-            <span className="text-xs text-slate-500 font-mono">{f.category}</span>
-            <span className="text-xs text-slate-600 font-mono border border-slate-700 rounded px-1">{f.tool}</span>
+            <span className="text-sm font-medium text-slate-200">{f.name}</span>
+            <span className="text-xs text-slate-500 font-mono border border-slate-700 rounded px-1.5 py-0.5">{f.tool}</span>
           </div>
-          {f.cve && (
-            <span className="text-xs text-red-400 font-mono">{f.cve}</span>
-          )}
+          <div className="flex items-center gap-3 mt-1 flex-wrap">
+            <span className="text-xs text-slate-500 font-mono">{f.category}</span>
+            {f.cve && <span className="text-xs text-red-400 font-mono">{f.cve}</span>}
+            {f.url && <span className="text-xs text-slate-600 truncate max-w-xs">{f.url}</span>}
+            {f.port && <span className="text-xs text-slate-500">port {f.port}</span>}
+          </div>
         </div>
-        <span className="flex-shrink-0 text-slate-600 mt-1">
+        <span className="flex-shrink-0 text-slate-600 mt-0.5">
           {open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
         </span>
       </button>
+
+      {/* Expanded detail */}
       {open && (
-        <div className="px-3 pb-3 pt-0 space-y-2 border-t border-slate-800">
-          <p className="text-sm text-slate-300 whitespace-pre-wrap">{f.description}</p>
+        <div className="border-t border-slate-800 p-3 space-y-3">
+          {/* Description */}
+          {f.description && (
+            <DetailSection icon={AlertTriangle} title="Vulnerability Description">
+              <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{f.description}</p>
+            </DetailSection>
+          )}
+
+          {/* Technical detail */}
+          <DetailSection icon={GitBranch} title="Technical Detail">
+            <div className="space-y-1.5 text-xs">
+              {f.target && (
+                <div><span className="text-slate-500">Target: </span><span className="font-mono text-slate-300">{f.target}</span></div>
+              )}
+              {f.url && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-slate-500">URL: </span>
+                  <a href={f.url} target="_blank" rel="noopener noreferrer"
+                    className="text-teal-400 hover:underline flex items-center gap-1 font-mono">
+                    {f.url} <ExternalLink className="h-3 w-3" />
+                  </a>
+                </div>
+              )}
+              {f.port && (
+                <div><span className="text-slate-500">Port: </span><span className="font-mono text-slate-300">{f.port}</span></div>
+              )}
+              {f.cve && (
+                <div><span className="text-slate-500">CVE: </span><span className="font-mono text-red-400">{f.cve}</span></div>
+              )}
+              <div><span className="text-slate-500">Tool: </span><span className="font-mono text-slate-300">{f.tool}</span></div>
+              <div><span className="text-slate-500">Category: </span><span className="font-mono text-slate-300">{f.category}</span></div>
+            </div>
+          </DetailSection>
+
+          {/* Evidence */}
           {f.evidence && (
-            <div>
-              <span className="text-xs text-slate-500 font-semibold uppercase tracking-wide">Evidence</span>
-              <pre className="mt-1 text-xs text-slate-400 font-mono bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap">{f.evidence}</pre>
-            </div>
+            <DetailSection icon={Zap} title="Evidence">
+              <pre className="text-xs text-slate-300 font-mono bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap leading-relaxed">{f.evidence}</pre>
+            </DetailSection>
           )}
-          {f.url && (
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs text-slate-500">URL:</span>
-              <a
-                href={f.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-xs text-teal-400 hover:underline flex items-center gap-1"
-              >
-                {f.url} <ExternalLink className="h-3 w-3" />
-              </a>
-            </div>
-          )}
-          {f.port && (
-            <div><span className="text-xs text-slate-500">Port: </span><span className="text-xs font-mono text-slate-300">{f.port}</span></div>
-          )}
+
+          {/* Remediation */}
           {f.remediation && (
-            <div>
-              <span className="text-xs text-slate-500 font-semibold uppercase tracking-wide">Remediation</span>
-              <p className="mt-1 text-xs text-teal-300 whitespace-pre-wrap">{f.remediation}</p>
-            </div>
+            <DetailSection icon={Wrench} title="Recommended Fix">
+              <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{f.remediation}</p>
+            </DetailSection>
           )}
         </div>
       )}
