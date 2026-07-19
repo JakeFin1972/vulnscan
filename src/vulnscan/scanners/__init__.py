@@ -6,7 +6,7 @@ the underlying tool is not installed or not running.
 from __future__ import annotations
 
 from .base import DynamicFinding, TargetType, ScanTool
-from . import nmap_scanner, zap_scanner, openvas_scanner, mcp_scanner, http_scanner, api_scanner
+from . import nmap_scanner, zap_scanner, openvas_scanner, mcp_scanner, http_scanner, api_scanner, nuclei_scanner
 
 
 def tool_status() -> dict[str, dict]:
@@ -24,6 +24,8 @@ def tool_status() -> dict[str, dict]:
                     "description": "Full vulnerability assessment (requires GVM daemon)"},
         "mcp":     {"available": True,
                     "description": "MCP server security probe (built-in, no external tool needed)"},
+        "nuclei":  {"available": nuclei_scanner.is_available(),
+                    "description": "CVE & template-based scanner — 10 000+ templates incl. protocol-level CVEs (requires nuclei binary)"},
     }
 
 
@@ -35,22 +37,22 @@ def run_dynamic_scan(
 ) -> list[DynamicFinding]:
     """Run the requested tools against `target` and aggregate findings.
 
-    `tools`  — subset of ["nmap", "zap", "openvas", "mcp"]; defaults to
+    `tools`  — subset of ["nmap", "zap", "openvas", "mcp", "nuclei"]; defaults to
                all tools appropriate for the target type.
-    `options`— per-tool overrides (e.g. {"nmap": {"profile": "full"}}).
+    `options`— per-tool overrides (e.g. {"nuclei": {"tags": ["cve"], "severity": ["critical","high"]}}).
     """
     opts = options or {}
 
     # Default tool selection by target type
     if tools is None:
         if target_type == "url":
-            tools = ["http", "api", "nmap", "mcp"]
+            tools = ["http", "api", "nuclei", "nmap", "mcp"]
         elif target_type == "host":
-            tools = ["nmap", "openvas"]
+            tools = ["nmap", "nuclei", "openvas"]
         elif target_type == "mcp":
             tools = ["mcp"]
         else:
-            tools = ["nmap"]
+            tools = ["nmap", "nuclei"]
 
     findings: list[DynamicFinding] = []
 
@@ -86,18 +88,21 @@ def run_dynamic_scan(
 
         elif tool == "openvas":
             host = _url_to_host(target) if target_type == "url" else target
-            tool_opts = opts.get("openvas", {})
+            ov_opts = opts.get("openvas", {})
             findings.extend(openvas_scanner.scan(
                 host,
-                host=tool_opts.get("host"),
-                port=tool_opts.get("port"),
-                user=tool_opts.get("user"),
-                password=tool_opts.get("password"),
+                host=ov_opts.get("host"),
+                port=ov_opts.get("port"),
+                user=ov_opts.get("user"),
+                password=ov_opts.get("password"),
             ))
 
         elif tool == "mcp":
             url = target if target.startswith("http") else f"http://{target}"
             findings.extend(mcp_scanner.scan(url))
+
+        elif tool == "nuclei":
+            findings.extend(nuclei_scanner.scan(target, options=tool_opts))
 
     return findings
 

@@ -232,8 +232,8 @@ function loadExternalScannerOptions(): Record<string, unknown> {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const TOOLS_BY_TYPE: Record<TargetType, ScanTool[]> = {
-  url:  ['http', 'api', 'nmap', 'mcp'],
-  host: ['nmap', 'openvas'],
+  url:  ['http', 'api', 'nuclei', 'nmap', 'mcp'],
+  host: ['nmap', 'nuclei', 'openvas'],
   mcp:  ['mcp'],
 }
 
@@ -315,7 +315,7 @@ export default function DynamicScanPage() {
     )
   }
 
-  const allTools: ScanTool[] = ['http', 'api', 'nmap', 'zap', 'openvas', 'mcp']
+  const allTools: ScanTool[] = ['http', 'api', 'nuclei', 'nmap', 'zap', 'openvas', 'mcp']
 
   const sevCounts = findings.reduce<Record<string, number>>((acc, f) => {
     acc[f.severity] = (acc[f.severity] ?? 0) + 1

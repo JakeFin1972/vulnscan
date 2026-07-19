@@ -67,7 +67,7 @@ export interface HealthStatus {
 
 export type TargetType = 'url' | 'host' | 'mcp'
 export type DynamicScanStatus = 'pending' | 'running' | 'done' | 'error'
-export type ScanTool = 'nmap' | 'http' | 'api' | 'zap' | 'openvas' | 'mcp'
+export type ScanTool = 'nmap' | 'http' | 'api' | 'zap' | 'openvas' | 'mcp' | 'nuclei'
 
 export interface DynamicScan {
   id: string
