@@ -34,7 +34,7 @@ except ImportError:
     _ZAP_AVAILABLE = False
 
 _ZAP_HOST    = os.environ.get("ZAP_HOST",    "localhost")
-_ZAP_PORT    = int(os.environ.get("ZAP_PORT",    "8080"))
+_ZAP_PORT    = int(os.environ.get("ZAP_PORT",    "8090"))
 _ZAP_API_KEY = os.environ.get("ZAP_API_KEY", "")
 
 # ZAP alert confidence → include/exclude filter
@@ -48,7 +48,7 @@ def is_available() -> bool:
         return False
     try:
         zap = _connect()
-        zap.core.version()
+        _ = zap.core.version  # property in newer zaproxy; method in older
         return True
     except Exception:  # noqa: BLE001
         return False
@@ -184,7 +184,7 @@ def scan(
         proxies = {"http": f"http://{zap_host}:{zap_port}",
                    "https": f"http://{zap_host}:{zap_port}"}
         zap = ZAPv2(apikey=zap_key, proxies=proxies)
-        version = zap.core.version()
+        version = zap.core.version  # property in newer zaproxy
     except Exception as exc:  # noqa: BLE001
         return [DynamicFinding(
             tool="zap", target=target_url,
