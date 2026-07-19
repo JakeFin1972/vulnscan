@@ -56,13 +56,17 @@ def run_dynamic_scan(
 
     findings: list[DynamicFinding] = []
 
+    host_only, target_port = _target_to_host_port(target, target_type)
+
     for tool in tools:
         tool_opts = opts.get(tool, {})
         if tool == "nmap":
             profile = tool_opts.get("profile", "standard")
-            extra   = tool_opts.get("extra_args", [])
-            host = _url_to_host(target) if target_type == "url" else target
-            findings.extend(nmap_scanner.scan(host, profile=profile, extra_args=extra))
+            extra   = list(tool_opts.get("extra_args", []))
+            # If target has an explicit port, always include it in addition to profile ports
+            if target_port and f"-p{target_port}" not in " ".join(extra) and f"-p {target_port}" not in " ".join(extra):
+                extra = [f"-p{target_port}"] + extra
+            findings.extend(nmap_scanner.scan(host_only, profile=profile, extra_args=extra))
 
         elif tool == "http":
             url = target if target.startswith("http") else f"http://{target}"
@@ -111,3 +115,19 @@ def _url_to_host(url: str) -> str:
     from urllib.parse import urlparse
     parsed = urlparse(url)
     return parsed.hostname or url
+
+
+def _target_to_host_port(target: str, target_type: str) -> tuple[str, int | None]:
+    """Split 'host:port' or URL into (host, port). Port may be None."""
+    if target_type == "url" or target.startswith("http"):
+        from urllib.parse import urlparse
+        p = urlparse(target if "://" in target else f"http://{target}")
+        return (p.hostname or target), p.port
+    # host:port form
+    if ":" in target:
+        host, _, port_str = target.rpartition(":")
+        try:
+            return host, int(port_str)
+        except ValueError:
+            pass
+    return target, None

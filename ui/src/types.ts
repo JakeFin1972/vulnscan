@@ -121,6 +121,17 @@ export interface EasmAsset {
   open_by_severity?: Record<string, number>
 }
 
+export type ExploitMaturity =
+  | 'trivial'
+  | 'actively_exploited'
+  | 'proof_of_concept'
+  | 'moderate'
+  | 'theoretical'
+  | 'low'
+  | 'requires_chain'
+  | 'known'
+  | 'unknown'
+
 export interface EasmVuln {
   id: string
   asset_id: string
@@ -142,6 +153,13 @@ export interface EasmVuln {
   last_seen_at: string
   resolved_at?: string
   status: VulnStatus
+  // enrichment fields
+  cvss_vector?: string
+  epss_score?: number
+  epss_percentile?: number
+  kev?: number
+  exploit_maturity?: ExploitMaturity
+  exploit_insight?: string
   // joined from easm_assets
   identifier?: string
   asset_type?: AssetType

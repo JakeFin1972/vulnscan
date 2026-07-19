@@ -190,6 +190,17 @@ export const easmGetScore = (assetId: string) =>
 export const easmScoreHistory = (assetId: string) =>
   request<EasmScoreRow[]>('GET', `/easm/scores/history/${assetId}`)
 
+export const easmEnrich = (assetId: string, force = false) =>
+  request<{ asset_id: string; status: string }>('POST', `/easm/enrich/${assetId}?force=${force}`)
+
+export const easmIngestScan = (
+  scanId: string,
+  asset: string,
+  assetType: string,
+  label?: string,
+): Promise<{ imported: number; skipped: number; asset_id: string; asset: string }> =>
+  request('POST', `/easm/ingest-scan/${scanId}`, { asset, asset_type: assetType, label })
+
 export const easmIngest = async (
   file: File,
   asset: string,

@@ -21,6 +21,7 @@ import {
   listDynamicScans,
   getDynamicScan,
   listDynamicFindings,
+  easmIngestScan,
 } from '../api'
 import type { DynamicScan, DynamicFinding, ScanTool, TargetType } from '../types'
 import { cn } from '@/lib/utils'
@@ -176,20 +177,118 @@ function FindingRow({ f }: { f: DynamicFinding }) {
   )
 }
 
+// ── EASM ingest bar ───────────────────────────────────────────────────────────
+
+function EasmIngestBar({ scanId, defaultAsset }: { scanId: string; defaultAsset: string }) {
+  const [open, setOpen] = useState(false)
+  const [asset, setAsset] = useState(() => {
+    // Strip scheme and trailing slash for cleaner default
+    return defaultAsset.replace(/^https?:\/\//, '').replace(/\/$/, '')
+  })
+  const [assetType, setAssetType] = useState<'ip' | 'domain' | 'url' | 'cidr'>('domain')
+  const [label, setLabel] = useState('')
+  const [result, setResult] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  async function handleIngest() {
+    setBusy(true); setResult(null); setError(null)
+    try {
+      const r = await easmIngestScan(scanId, asset.trim(), assetType, label.trim() || undefined)
+      setResult(`Imported ${r.imported} finding${r.imported !== 1 ? 's' : ''} → asset "${r.asset}"`)
+      setOpen(false)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (result) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 rounded bg-teal-900/30 border border-teal-800 text-xs text-teal-300">
+        <Wrench className="h-3.5 w-3.5 flex-shrink-0" />
+        {result}
+      </div>
+    )
+  }
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-slate-400 hover:text-slate-200 hover:bg-slate-800/50 transition-colors text-left"
+      >
+        <Wrench className="h-3.5 w-3.5 text-teal-500 flex-shrink-0" />
+        <span className="font-medium">Ingest into EASM</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 ml-auto transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="px-3 pb-3 pt-1 border-t border-slate-800 space-y-2">
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Asset identifier</label>
+              <input
+                value={asset}
+                onChange={e => setAsset(e.target.value)}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+              />
+            </div>
+            <div>
+              <label className="block text-[10px] text-slate-500 mb-1">Asset type</label>
+              <select
+                value={assetType}
+                onChange={e => setAssetType(e.target.value as typeof assetType)}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-teal-600"
+              >
+                <option value="domain">domain</option>
+                <option value="ip">ip</option>
+                <option value="url">url</option>
+                <option value="cidr">cidr</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-[10px] text-slate-500 mb-1">Label <span className="text-slate-600">(optional)</span></label>
+            <input
+              value={label}
+              onChange={e => setLabel(e.target.value)}
+              placeholder="e.g. pentest-ground"
+              className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-teal-600"
+            />
+          </div>
+          {error && <p className="text-[10px] text-red-400">{error}</p>}
+          <button
+            disabled={!asset.trim() || busy}
+            onClick={handleIngest}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-teal-700 hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-medium rounded transition-colors"
+          >
+            {busy ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Wrench className="h-3 w-3" />}
+            {busy ? 'Ingesting…' : 'Ingest findings'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Scan row (in history list) ────────────────────────────────────────────────
 
 function ScanRow({
   scan,
   selected,
   onClick,
+  onRescan,
+  rescanning,
 }: {
   scan: DynamicScan
   selected: boolean
   onClick: () => void
+  onRescan: () => void
+  rescanning: boolean
 }) {
   return (
-    <button
-      onClick={onClick}
+    <div
       className={cn(
         'w-full text-left px-3 py-2.5 rounded flex items-start gap-3 transition-colors text-sm',
         selected
@@ -197,20 +296,30 @@ function ScanRow({
           : 'bg-slate-900 border border-slate-800 hover:border-slate-700',
       )}
     >
-      <TargetIcon type={scan.target_type} />
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="font-mono text-xs text-slate-300 truncate">{scan.target}</span>
-          <StatusBadge status={scan.status} />
+      <button className="flex-1 flex items-start gap-3 min-w-0 text-left" onClick={onClick}>
+        <TargetIcon type={scan.target_type} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-mono text-xs text-slate-300 truncate">{scan.target}</span>
+            <StatusBadge status={scan.status} />
+          </div>
+          <div className="flex gap-2 mt-1 flex-wrap">
+            <span className="text-xs text-slate-500">{scan.tools.join(', ')}</span>
+            {scan.status === 'done' && (
+              <span className="text-xs text-slate-400">{scan.finding_count} finding{scan.finding_count !== 1 ? 's' : ''}</span>
+            )}
+          </div>
         </div>
-        <div className="flex gap-2 mt-1 flex-wrap">
-          <span className="text-xs text-slate-500">{scan.tools.join(', ')}</span>
-          {scan.status === 'done' && (
-            <span className="text-xs text-slate-400">{scan.finding_count} finding{scan.finding_count !== 1 ? 's' : ''}</span>
-          )}
-        </div>
-      </div>
-    </button>
+      </button>
+      <button
+        onClick={e => { e.stopPropagation(); onRescan() }}
+        disabled={rescanning || scan.status === 'pending' || scan.status === 'running'}
+        title="Re-run this scan"
+        className="mt-0.5 flex-shrink-0 text-slate-600 hover:text-teal-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+      >
+        <RefreshCw className={cn('h-3.5 w-3.5', rescanning && 'animate-spin')} />
+      </button>
+    </div>
   )
 }
 
@@ -225,6 +334,17 @@ function loadExternalScannerOptions(): Record<string, unknown> {
   try {
     const ov = JSON.parse(localStorage.getItem('vulnscan_openvas_config') ?? 'null')
     if (ov) opts['openvas'] = ov
+  } catch {}
+  try {
+    const nm = JSON.parse(localStorage.getItem('vulnscan_nmap_config') ?? 'null')
+    if (nm) {
+      opts['nmap'] = {
+        profile: nm.profile ?? 'standard',
+        ...(nm.extra_args?.trim()
+          ? { extra_args: nm.extra_args.trim().split(/\s+/) }
+          : {}),
+      }
+    }
   } catch {}
   return opts
 }
@@ -289,7 +409,7 @@ export default function DynamicScanPage() {
     }
   }, [activeScan?.status, refetchScans])
 
-  // Mutation
+  // Mutation — new scan from form
   const startMutation = useMutation({
     mutationFn: () => startDynamicScan(
       target.trim(),
@@ -302,6 +422,28 @@ export default function DynamicScanPage() {
       setActiveScanId(scan.id)
     },
   })
+
+  // Mutation — rescan an existing scan
+  const [rescanningId, setRescanningId] = useState<string | null>(null)
+  const rescanMutation = useMutation({
+    mutationFn: (prev: DynamicScan) => startDynamicScan(
+      prev.target,
+      prev.target_type as TargetType,
+      prev.tools as ScanTool[],
+      loadExternalScannerOptions(),
+    ),
+    onSuccess: (newScan) => {
+      qc.invalidateQueries({ queryKey: ['dynamic-scans'] })
+      setActiveScanId(newScan.id)
+      setRescanningId(null)
+    },
+    onError: () => setRescanningId(null),
+  })
+
+  function handleRescan(prev: DynamicScan) {
+    setRescanningId(prev.id)
+    rescanMutation.mutate(prev)
+  }
 
   // Update tool defaults when target type changes
   function handleTypeChange(t: TargetType) {
@@ -446,6 +588,8 @@ export default function DynamicScanPage() {
               scan={scan}
               selected={scan.id === activeScanId}
               onClick={() => setActiveScanId(scan.id)}
+              onRescan={() => handleRescan(scan)}
+              rescanning={rescanningId === scan.id}
             />
           ))}
         </div>
@@ -462,18 +606,23 @@ export default function DynamicScanPage() {
           <>
             {/* Scan info bar */}
             {activeScan && (
-              <div className="flex items-center gap-3 mb-5 flex-wrap">
-                <TargetIcon type={activeScan.target_type} />
-                <span className="font-mono text-sm text-slate-200">{activeScan.target}</span>
-                <StatusBadge status={activeScan.status} />
-                {activeScan.status === 'running' && (
-                  <RefreshCw className="h-3.5 w-3.5 text-teal-500 animate-spin" />
-                )}
-                {activeScan.status === 'done' && (
-                  <span className="text-xs text-slate-400">{activeScan.finding_count} finding{activeScan.finding_count !== 1 ? 's' : ''}</span>
-                )}
-                {activeScan.error && (
-                  <span className="text-xs text-red-400">{activeScan.error}</span>
+              <div className="mb-5 space-y-3">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <TargetIcon type={activeScan.target_type} />
+                  <span className="font-mono text-sm text-slate-200">{activeScan.target}</span>
+                  <StatusBadge status={activeScan.status} />
+                  {activeScan.status === 'running' && (
+                    <RefreshCw className="h-3.5 w-3.5 text-teal-500 animate-spin" />
+                  )}
+                  {activeScan.status === 'done' && (
+                    <span className="text-xs text-slate-400">{activeScan.finding_count} finding{activeScan.finding_count !== 1 ? 's' : ''}</span>
+                  )}
+                  {activeScan.error && (
+                    <span className="text-xs text-red-400">{activeScan.error}</span>
+                  )}
+                </div>
+                {activeScan.status === 'done' && activeScan.finding_count > 0 && (
+                  <EasmIngestBar scanId={activeScan.id} defaultAsset={activeScan.target} />
                 )}
               </div>
             )}

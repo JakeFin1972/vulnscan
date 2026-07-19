@@ -7,13 +7,13 @@ import {
 import {
   Globe, Server, Network, Upload, RefreshCw, ChevronDown,
   ChevronUp, CheckCircle2, AlertTriangle, XCircle,
-  Shield, Activity, Target,
+  Shield, Activity, Target, Zap, Info,
 } from 'lucide-react'
 import {
   easmDashboard, easmListAssets, easmGetAsset, easmListVulns,
-  easmPatchVuln, easmComputeScore, easmScoreHistory, easmIngest,
+  easmPatchVuln, easmComputeScore, easmScoreHistory, easmIngest, easmEnrich,
 } from '../api'
-import type { EasmAsset, EasmVuln, VulnStatus } from '../types'
+import type { EasmAsset, EasmVuln, VulnStatus, ExploitMaturity } from '../types'
 import { cn } from '@/lib/utils'
 
 // ── Severity palette ──────────────────────────────────────────────────────────
@@ -40,6 +40,72 @@ function SevBadge({ sev }: { sev: string }) {
     <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-bold border uppercase tracking-wide', SEV_BG[sev] ?? SEV_BG.info)}>
       {sev}
     </span>
+  )
+}
+
+// ── Exploitability badge + panel ──────────────────────────────────────────────
+
+const MATURITY_STYLE: Record<ExploitMaturity, { bg: string; label: string }> = {
+  trivial:            { bg: 'bg-red-900/70 text-red-200 border-red-600',       label: 'Trivial' },
+  actively_exploited: { bg: 'bg-red-900/70 text-red-200 border-red-600',       label: 'Exploited ITW' },
+  proof_of_concept:   { bg: 'bg-orange-900/60 text-orange-200 border-orange-600', label: 'PoC exists' },
+  moderate:           { bg: 'bg-yellow-900/60 text-yellow-200 border-yellow-600', label: 'Moderate' },
+  theoretical:        { bg: 'bg-blue-900/60 text-blue-200 border-blue-600',    label: 'Theoretical' },
+  requires_chain:     { bg: 'bg-slate-800 text-slate-400 border-slate-600',    label: 'Needs chain' },
+  known:              { bg: 'bg-purple-900/60 text-purple-200 border-purple-600', label: 'CVE known' },
+  low:                { bg: 'bg-slate-800 text-slate-500 border-slate-700',    label: 'Low risk' },
+  unknown:            { bg: 'bg-slate-900 text-slate-600 border-slate-800',    label: 'Unknown' },
+}
+
+function ExploitBadge({ maturity }: { maturity: ExploitMaturity }) {
+  const s = MATURITY_STYLE[maturity] ?? MATURITY_STYLE.unknown
+  return (
+    <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-semibold border', s.bg)}>
+      {s.label}
+    </span>
+  )
+}
+
+function ExploitPanel({ v }: { v: EasmVuln }) {
+  const hasEnrich = v.exploit_insight != null
+  if (!hasEnrich) return null
+
+  return (
+    <div className="mt-2 p-2.5 rounded border border-slate-700/60 bg-slate-950/60 space-y-2">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Zap className="h-3.5 w-3.5 text-yellow-400 flex-shrink-0" />
+        <span className="text-[10px] font-bold text-yellow-400 uppercase tracking-wide">Exploitability</span>
+        {v.exploit_maturity && <ExploitBadge maturity={v.exploit_maturity} />}
+        {v.kev === 1 && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold border bg-red-950 text-red-300 border-red-600 uppercase">
+            CISA KEV
+          </span>
+        )}
+      </div>
+
+      {/* CVSS vector + EPSS row */}
+      {(v.cvss_vector || v.epss_score != null) && (
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] font-mono">
+          {v.cvss_vector && (
+            <span className="text-slate-400">{v.cvss_vector}</span>
+          )}
+          {v.epss_score != null && (
+            <span className="text-teal-400">
+              EPSS {(v.epss_score * 100).toFixed(2)}%
+              {v.epss_percentile != null && (
+                <span className="text-slate-500 ml-1">
+                  (top {((1 - v.epss_percentile) * 100).toFixed(0)}%)
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+      )}
+
+      {v.exploit_insight && (
+        <p className="text-xs text-slate-300 leading-relaxed">{v.exploit_insight}</p>
+      )}
+    </div>
   )
 }
 
@@ -134,6 +200,10 @@ function VulnRow({ v, onStatusChange }: {
             <span className="text-sm text-slate-200 truncate">{v.name}</span>
             <SevBadge sev={v.severity} />
             {v.cve && <span className="text-[10px] font-mono text-red-400">{v.cve}</span>}
+            {v.exploit_maturity && <ExploitBadge maturity={v.exploit_maturity} />}
+            {v.kev === 1 && (
+              <span className="px-1 py-0.5 rounded text-[9px] font-bold border bg-red-950 text-red-300 border-red-700 uppercase">KEV</span>
+            )}
             <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-semibold', STATUS_STYLE[v.status])}>
               {STATUS_LABEL[v.status]}
             </span>
@@ -143,6 +213,9 @@ function VulnRow({ v, onStatusChange }: {
             {v.port && <span>:{v.port}</span>}
             <span>{v.source_tool}</span>
             {v.cvss_score != null && <span>CVSS {v.cvss_score.toFixed(1)}</span>}
+            {v.epss_score != null && (
+              <span className="text-teal-600">EPSS {(v.epss_score * 100).toFixed(1)}%</span>
+            )}
           </div>
         </div>
         {open ? <ChevronUp className="h-4 w-4 text-slate-600 flex-shrink-0 mt-0.5" />
@@ -162,6 +235,7 @@ function VulnRow({ v, onStatusChange }: {
           {v.remediation && (
             <p className="text-xs text-teal-400 border-l-2 border-teal-700 pl-2">{v.remediation}</p>
           )}
+          <ExploitPanel v={v} />
           <div className="flex gap-2 flex-wrap pt-1">
             {nextStatuses.map(s => (
               <button key={s}
@@ -362,6 +436,18 @@ function AssetDetail({ assetId }: { assetId: string }) {
     },
   })
 
+  const [enriched, setEnriched] = useState(false)
+  const enrichMut = useMutation({
+    mutationFn: () => easmEnrich(assetId),
+    onSuccess: () => {
+      setEnriched(true)
+      // Poll vulns after a delay so background enrichment can complete
+      setTimeout(() => refetchVulns(), 3000)
+      setTimeout(() => refetchVulns(), 8000)
+      setTimeout(() => refetchVulns(), 16000)
+    },
+  })
+
   const patchMut = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) => easmPatchVuln(id, status),
     onSuccess: () => {
@@ -406,17 +492,50 @@ function AssetDetail({ assetId }: { assetId: string }) {
           </div>
           <p className="text-xs text-slate-500 mt-0.5 uppercase">{asset?.asset_type}</p>
         </div>
-        <button
-          onClick={() => scoreMut.mutate()}
-          disabled={scoreMut.isPending}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-teal-700 text-teal-400 text-xs hover:bg-teal-900/30 disabled:opacity-40 transition-colors"
-        >
-          {scoreMut.isPending
-            ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-            : <Activity className="h-3.5 w-3.5" />}
-          Compute Score
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            onClick={() => enrichMut.mutate()}
+            disabled={enrichMut.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-yellow-700 text-yellow-400 text-xs hover:bg-yellow-900/20 disabled:opacity-40 transition-colors"
+            title="Fetch CVE scores, EPSS probability and exploit insights from NVD and FIRST"
+          >
+            {enrichMut.isPending
+              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              : <Zap className="h-3.5 w-3.5" />}
+            {enriched ? 'Re-Enrich' : 'Enrich'}
+          </button>
+          <button
+            onClick={() => scoreMut.mutate()}
+            disabled={scoreMut.isPending}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-teal-700 text-teal-400 text-xs hover:bg-teal-900/30 disabled:opacity-40 transition-colors"
+          >
+            {scoreMut.isPending
+              ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+              : <Activity className="h-3.5 w-3.5" />}
+            Compute Score
+          </button>
+        </div>
       </div>
+
+      {/* Enrichment status banner */}
+      {enrichMut.isPending && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded border border-yellow-800 bg-yellow-900/20 text-xs text-yellow-300">
+          <RefreshCw className="h-3.5 w-3.5 animate-spin flex-shrink-0" />
+          <span>
+            Fetching CVE scores and EPSS data from NVD and FIRST APIs — this may take
+            a minute. Findings will update automatically when ready.
+          </span>
+        </div>
+      )}
+      {enrichMut.isSuccess && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded border border-yellow-800/50 bg-yellow-900/10 text-xs text-yellow-500">
+          <Zap className="h-3.5 w-3.5 flex-shrink-0" />
+          <span>
+            Enrichment started — exploit insights will appear in findings as they complete.
+            Click <span className="font-semibold">Re-Enrich</span> to refresh.
+          </span>
+        </div>
+      )}
 
       {/* Score + charts row */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

@@ -41,6 +41,7 @@ def scan(url: str, options: dict[str, Any] | None = None) -> list[DynamicFinding
     parsed = urllib.parse.urlparse(url)
 
     # ── 1. Fetch the root URL (follow redirects) ───────────────────────────────
+    resp = None
     try:
         with httpx.Client(timeout=timeout, follow_redirects=True, verify=True) as client:
             resp = client.get(url)
@@ -51,19 +52,25 @@ def scan(url: str, options: dict[str, Any] | None = None) -> list[DynamicFinding
             "high", "network_error",
             remediation="Verify the server is reachable and listening on the expected port.",
         ))
-        return findings
+        # Still run path probes — server may be slow on root but respond on specific paths
+    except httpx.TimeoutException:
+        findings.append(_finding(
+            url, "Request timeout",
+            f"GET {url} timed out after {timeout}s. Server may be slow or rate-limiting.",
+            "info", "network_error",
+        ))
+        # Continue to path probes despite timeout
     except httpx.RequestError as exc:
         findings.append(_finding(
             url, "Request error",
             str(exc), "medium", "network_error",
         ))
-        return findings
 
-    final_url = str(resp.url)
-    headers = {k.lower(): v for k, v in resp.headers.items()}
+    final_url = str(resp.url) if resp is not None else url
+    headers = {k.lower(): v for k, v in resp.headers.items()} if resp is not None else {}
 
     # ── 2. HTTPS enforcement ───────────────────────────────────────────────────
-    if parsed.scheme == "http":
+    if resp is not None and parsed.scheme == "http":
         if final_url.startswith("https://"):
             # Redirect exists — check it's permanent
             if resp.history and resp.history[0].status_code not in (301, 308):
@@ -177,7 +184,7 @@ def scan(url: str, options: dict[str, Any] | None = None) -> list[DynamicFinding
             ))
 
     # ── 8. Cookie security flags ──────────────────────────────────────────────
-    for sc in resp.cookies.jar:
+    for sc in (resp.cookies.jar if resp is not None else []):
         name = sc.name
         missing: list[str] = []
         if final_url.startswith("https://") and not sc.secure:
@@ -230,20 +237,53 @@ def scan(url: str, options: dict[str, Any] | None = None) -> list[DynamicFinding
         def _any(_b: str) -> bool:
             return True
 
+        def _is_csv(b: str) -> bool:
+            lines = b.strip().splitlines()
+            return len(lines) >= 2 and "," in lines[0]
+
+        def _is_doc_content(b: str) -> bool:
+            # DOCX/XLSX/PPTX are ZIP-based, Office XML or plaintext office docs
+            return bool(b) and not b.lstrip().startswith("<")
+
+        def _is_dir_listing(b: str) -> bool:
+            return ("Index of" in b or "Directory listing" in b
+                    or ("<a href=" in b and ("Parent Directory" in b or ".." in b)))
+
         sensitive_paths: list[tuple] = [
-            ("/.env",              "Environment file exposed",         "critical", _is_env),
-            ("/.git/config",       "Git repository exposed",           "critical", _is_git_config),
-            ("/backup.sql",        "Database backup exposed",          "critical", _is_sql),
-            ("/phpinfo.php",       "PHP info page exposed",            "high",     _is_php_info),
-            ("/wp-config.php.bak", "WordPress config backup exposed",  "critical", _is_env),
-            ("/server-status",     "Apache server-status exposed",     "medium",   _is_server_status),
-            ("/actuator",          "Spring Boot actuator exposed",     "high",     _is_actuator),
-            ("/actuator/env",      "Spring Boot env actuator exposed", "critical", _is_actuator),
+            ("/.env",                "Environment file exposed",              "critical", _is_env),
+            ("/.env.local",          "Environment file (.env.local) exposed", "critical", _is_env),
+            ("/.env.production",     "Environment file (.env.production) exposed", "critical", _is_env),
+            ("/.git/config",         "Git repository exposed",                "critical", _is_git_config),
+            ("/backup.sql",          "Database backup exposed",               "critical", _is_sql),
+            ("/dump.sql",            "Database dump exposed",                 "critical", _is_sql),
+            ("/database.sql",        "Database file exposed",                 "critical", _is_sql),
+            ("/phpinfo.php",         "PHP info page exposed",                 "high",     _is_php_info),
+            ("/wp-config.php.bak",   "WordPress config backup exposed",       "critical", _is_env),
+            ("/server-status",       "Apache server-status exposed",          "medium",   _is_server_status),
+            ("/actuator",            "Spring Boot actuator exposed",          "high",     _is_actuator),
+            ("/actuator/env",        "Spring Boot env actuator exposed",      "critical", _is_actuator),
+            ("/api/swagger.json",    "Swagger API spec exposed",              "medium",   _any),
+            ("/swagger.json",        "Swagger API spec exposed",              "medium",   _any),
+            ("/openapi.json",        "OpenAPI spec exposed",                  "medium",   _any),
+            ("/v1/swagger.json",     "Swagger v1 spec exposed",               "medium",   _any),
+            ("/documents/",          "Document directory listing exposed",     "high",     _is_dir_listing),
+            ("/uploads/",            "Upload directory listing exposed",       "high",     _is_dir_listing),
+            ("/files/",              "Files directory listing exposed",        "high",     _is_dir_listing),
+            ("/backup/",             "Backup directory listing exposed",       "critical", _is_dir_listing),
+            ("/config/",             "Config directory listing exposed",       "critical", _is_dir_listing),
+            # Common exposed data files on pentest/practice sites
+            ("/documents/employees/employees.csv",         "Employee data exposed",      "critical", _is_csv),
+            ("/documents/company/full_backup_2026_01_27.csv", "Company backup exposed",  "critical", _is_csv),
+            ("/employees.csv",       "Employee CSV exposed",                  "critical", _is_csv),
+            ("/users.csv",           "User CSV exposed",                      "critical", _is_csv),
+            ("/export.csv",          "Data export exposed",                   "high",     _is_csv),
+            ("/data.csv",            "Data file exposed",                     "high",     _is_csv),
         ]
         # Binary checks (need raw bytes)
         binary_paths: list[tuple] = [
-            ("/backup.zip", "Backup archive exposed",   "high", _is_zip),
-            ("/.DS_Store",  "macOS .DS_Store exposed",  "low",  _is_ds_store),
+            ("/backup.zip",   "Backup archive exposed",    "high", _is_zip),
+            ("/backup.tar.gz","Backup archive exposed",    "high", lambda b: b[:2] == b"\x1f\x8b"),
+            ("/.DS_Store",    "macOS .DS_Store exposed",   "low",  _is_ds_store),
         ]
 
         base = f"{parsed.scheme}://{parsed.netloc}"

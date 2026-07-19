@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
 import { RotateCcw, Loader2, Plus, ExternalLink } from 'lucide-react'
 import { listScans, startScan } from '@/api'
 import StatusBadge from '@/components/StatusBadge'
+import type { Scan } from '@/types'
 
 function fmt(iso: string) {
   const d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
@@ -21,6 +22,7 @@ export default function Scans() {
   const [scanError, setScanError] = useState<string | null>(null)
   const [path, setPath] = useState('')
   const [authorized, setAuthorized] = useState(false)
+  const [confirmRescanId, setConfirmRescanId] = useState<string | null>(null)
 
   const scansQ = useQuery({
     queryKey: ['scans'],
@@ -30,13 +32,21 @@ export default function Scans() {
 
   const scans = scansQ.data ?? []
 
-  async function handleRerun(scanPath: string) {
-    if (!confirm(`Re-run scan on:\n${scanPath}\n\nYou confirm this path is authorized for scanning.`)) return
-    try {
-      await startScan(scanPath)
-      await qc.invalidateQueries({ queryKey: ['scans'] })
-    } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : String(e))
+  const rescanMut = useMutation({
+    mutationFn: (scanPath: string) => startScan(scanPath),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scans'] })
+      setConfirmRescanId(null)
+    },
+  })
+
+  function handleRescanClick(s: Scan) {
+    if (confirmRescanId === s.id) {
+      // Second click — confirmed
+      rescanMut.mutate(s.path)
+    } else {
+      // First click — arm confirmation
+      setConfirmRescanId(s.id)
     }
   }
 
@@ -111,53 +121,64 @@ export default function Scans() {
                 <th className="px-4 py-2.5 font-medium text-right">Sources</th>
                 <th className="px-4 py-2.5 font-medium text-right">Sinks</th>
                 <th className="px-4 py-2.5 font-medium text-right">Pairs</th>
-                <th className="px-4 py-2.5 w-20" />
+                <th className="px-4 py-2.5 w-24" />
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60">
-              {scans.map(s => (
-                <tr
-                  key={s.id}
-                  className={`transition-colors ${
-                    highlight === s.id ? 'bg-teal-500/10' : 'hover:bg-slate-800/30'
-                  }`}
-                >
-                  <td className="px-4 py-2.5">
-                    <StatusBadge status={s.status} />
-                    {s.error && (
-                      <div className="mt-0.5 text-red-400 font-mono text-xs max-w-xs truncate" title={s.error}>
-                        {s.error}
-                      </div>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 font-mono text-slate-300 max-w-xs">
-                    <div className="truncate" title={s.path}>{s.path}</div>
-                  </td>
-                  <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmt(s.created_at)}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-400">{s.source_count}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-400">{s.sink_count}</td>
-                  <td className="px-4 py-2.5 text-right text-slate-400">{s.pair_count}</td>
-                  <td className="px-4 py-2.5">
-                    <div className="flex items-center justify-end gap-2">
-                      {s.status === 'done' && (
-                        <Link
-                          to={`/findings?scan_id=${s.id}`}
-                          className="flex items-center gap-1 text-teal-500 hover:text-teal-400 transition-colors"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                        </Link>
+              {scans.map(s => {
+                const confirming = confirmRescanId === s.id
+                const rescanning = rescanMut.isPending && confirmRescanId === s.id
+                return (
+                  <tr
+                    key={s.id}
+                    className={`transition-colors ${
+                      highlight === s.id ? 'bg-teal-500/10' : 'hover:bg-slate-800/30'
+                    }`}
+                    onMouseLeave={() => { if (confirming && !rescanning) setConfirmRescanId(null) }}
+                  >
+                    <td className="px-4 py-2.5">
+                      <StatusBadge status={s.status} />
+                      {s.error && (
+                        <div className="mt-0.5 text-red-400 font-mono text-xs max-w-xs truncate" title={s.error}>
+                          {s.error}
+                        </div>
                       )}
-                      <button
-                        onClick={() => handleRerun(s.path)}
-                        title="Re-run scan"
-                        className="text-slate-500 hover:text-slate-300 transition-colors"
-                      >
-                        <RotateCcw className="h-3 w-3" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-slate-300 max-w-xs">
+                      <div className="truncate" title={s.path}>{s.path}</div>
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmt(s.created_at)}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-400">{s.source_count}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-400">{s.sink_count}</td>
+                    <td className="px-4 py-2.5 text-right text-slate-400">{s.pair_count}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center justify-end gap-2">
+                        {s.status === 'done' && (
+                          <Link
+                            to={`/findings?scan_id=${s.id}`}
+                            className="flex items-center gap-1 text-teal-500 hover:text-teal-400 transition-colors"
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                          </Link>
+                        )}
+                        <button
+                          onClick={() => handleRescanClick(s)}
+                          disabled={rescanning || s.status === 'pending' || s.status === 'running'}
+                          title={confirming ? 'Click again to confirm rescan' : 'Re-run scan'}
+                          className={`flex items-center gap-1 transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                            confirming
+                              ? 'text-orange-400 hover:text-orange-300'
+                              : 'text-slate-500 hover:text-slate-300'
+                          }`}
+                        >
+                          <RotateCcw className={`h-3 w-3 ${rescanning ? 'animate-spin' : ''}`} />
+                          {confirming && !rescanning && <span className="text-[10px] font-medium">confirm?</span>}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

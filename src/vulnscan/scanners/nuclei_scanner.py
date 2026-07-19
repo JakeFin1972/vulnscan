@@ -161,17 +161,20 @@ def _parse_line(line: str, default_target: str) -> DynamicFinding | None:
     matched_at  = obj.get("matched-at", "") or obj.get("host", default_target)
     extracted   = obj.get("extracted-results", [])
 
-    cve_id   = classification.get("cve-id", "") or _extract_cve(template_id)
+    # cve-id / cwe-id may be null, a string, or a list depending on template
+    _cve_raw = classification.get("cve-id") or ""
+    cve_id   = (_cve_raw[0] if isinstance(_cve_raw, list) else _cve_raw) or _extract_cve(template_id)
     cvss     = classification.get("cvss-score")
-    cwe_raw  = classification.get("cwe-id", "")
+    _cwe_raw = classification.get("cwe-id") or ""
+    cwe_str  = ", ".join(_cwe_raw) if isinstance(_cwe_raw, list) else str(_cwe_raw)
     tags     = info.get("tags", [])
 
     # Build evidence string
     evidence_parts: list[str] = []
     if cvss:
         evidence_parts.append(f"CVSS: {cvss}")
-    if cwe_raw:
-        evidence_parts.append(f"CWE: {cwe_raw}")
+    if cwe_str:
+        evidence_parts.append(f"CWE: {cwe_str}")
     if extracted:
         evidence_parts.append("Extracted: " + ", ".join(str(x) for x in extracted[:5]))
     evidence = " | ".join(evidence_parts) if evidence_parts else ""

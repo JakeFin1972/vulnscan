@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Save, Plus, Trash2, CheckCircle, XCircle, Loader2 } from 'lucide-react'
+import { Save, Plus, Trash2, CheckCircle, XCircle, Loader2, RefreshCw } from 'lucide-react'
 import { health } from '@/api'
 
 const API_URL_KEY = 'vulnscan_api_url'
 const PATHS_KEY = 'vulnscan_authorized_paths'
 const ZAP_CONFIG_KEY = 'vulnscan_zap_config'
 const OPENVAS_CONFIG_KEY = 'vulnscan_openvas_config'
+const NMAP_CONFIG_KEY = 'vulnscan_nmap_config'
 
 function loadPaths(): string[] {
   try { return JSON.parse(localStorage.getItem(PATHS_KEY) ?? '[]') as string[] }
@@ -26,12 +27,17 @@ interface OpenVasConfig {
   password: string
 }
 
+interface NmapConfig {
+  profile: string
+  extra_args: string
+}
+
 function loadZapConfig(): ZapConfig {
   try {
     const stored = JSON.parse(localStorage.getItem(ZAP_CONFIG_KEY) ?? 'null')
     if (stored) return stored as ZapConfig
   } catch {}
-  return { host: 'localhost', port: '8080', api_key: '' }
+  return { host: 'localhost', port: '8090', api_key: '' }
 }
 
 function loadOpenVasConfig(): OpenVasConfig {
@@ -40,6 +46,27 @@ function loadOpenVasConfig(): OpenVasConfig {
     if (stored) return stored as OpenVasConfig
   } catch {}
   return { host: 'localhost', port: '9390', user: 'admin', password: 'admin' }
+}
+
+function loadNmapConfig(): NmapConfig {
+  try {
+    const stored = JSON.parse(localStorage.getItem(NMAP_CONFIG_KEY) ?? 'null')
+    if (stored) return stored as NmapConfig
+  } catch {}
+  return { profile: 'standard', extra_args: '' }
+}
+
+const NMAP_PROFILES = [
+  { id: 'quick',    label: 'Quick',    desc: 'Top 100 ports, no scripts' },
+  { id: 'standard', label: 'Standard', desc: 'Top 1000 ports, version detection' },
+  { id: 'full',     label: 'Full',     desc: 'All ports, vuln/auth scripts' },
+  { id: 'stealth',  label: 'Stealth',  desc: 'Slow, low-noise TCP connect' },
+]
+
+function ScannerDot({ available, loading }: { available?: boolean; loading: boolean }) {
+  if (loading) return <Loader2 className="h-3 w-3 text-slate-500 animate-spin" />
+  if (available) return <span className="h-2 w-2 rounded-full bg-green-400 inline-block" />
+  return <span className="h-2 w-2 rounded-full bg-slate-600 inline-block" />
 }
 
 export default function Settings() {
@@ -54,6 +81,8 @@ export default function Settings() {
   const [zapSaved, setZapSaved] = useState(false)
   const [openVasConfig, setOpenVasConfig] = useState<OpenVasConfig>(loadOpenVasConfig)
   const [openVasSaved, setOpenVasSaved] = useState(false)
+  const [nmapConfig, setNmapConfig] = useState<NmapConfig>(loadNmapConfig)
+  const [nmapSaved, setNmapSaved] = useState(false)
 
   const healthQ = useQuery({
     queryKey: ['health', apiUrl],
@@ -61,6 +90,8 @@ export default function Settings() {
     retry: false,
     staleTime: 5000,
   })
+
+  const scanners = healthQ.data?.scanners ?? {}
 
   function saveApiUrl() {
     localStorage.setItem(API_URL_KEY, apiUrl)
@@ -96,8 +127,15 @@ export default function Settings() {
     setTimeout(() => setOpenVasSaved(false), 2000)
   }
 
-  const zapConfigured = zapConfig.host !== 'localhost' || zapConfig.api_key !== '' || zapConfig.port !== '8080'
-  const openVasConfigured = openVasConfig.host !== 'localhost' || openVasConfig.port !== '9390' || openVasConfig.user !== 'admin'
+  function saveNmapConfig() {
+    localStorage.setItem(NMAP_CONFIG_KEY, JSON.stringify(nmapConfig))
+    setNmapSaved(true)
+    setTimeout(() => setNmapSaved(false), 2000)
+  }
+
+  const nmapAvailable = scanners['nmap']?.available
+  const zapAvailable = scanners['zap']?.available
+  const openvasAvailable = scanners['openvas']?.available
 
   return (
     <div className="p-6 max-w-xl space-y-6">
@@ -119,6 +157,13 @@ export default function Settings() {
               : healthQ.isSuccess ? `Connected — ${healthQ.data.scan_count} scans, ${healthQ.data.language_count} languages`
               : 'Not reachable'}
           </span>
+          <button
+            onClick={() => healthQ.refetch()}
+            className="ml-auto text-slate-600 hover:text-slate-400 transition-colors"
+            title="Refresh status"
+          >
+            <RefreshCw className="h-3 w-3" />
+          </button>
         </div>
 
         <div className="flex items-center gap-2">
@@ -138,9 +183,27 @@ export default function Settings() {
           </button>
         </div>
         <p className="text-xs text-slate-600">
-          Stored in localStorage. Start the API with:{' '}
-          <code className="font-mono text-slate-500">uvicorn vulnscan.api:app --port 8765</code>
+          Start API:{' '}
+          <code className="font-mono text-slate-500">PYTHONPATH=src uvicorn vulnscan.api:app --port 8765</code>
         </p>
+
+        {/* Scanner status grid */}
+        {healthQ.isSuccess && (
+          <div className="pt-2 border-t border-slate-800">
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Scanner Status</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {Object.entries(scanners).map(([name, s]) => (
+                <div key={name} className="flex items-center gap-2">
+                  <ScannerDot available={s.available} loading={healthQ.isFetching} />
+                  <span className="font-mono text-xs text-slate-300 w-16">{name}</span>
+                  <span className={`text-[10px] ${s.available ? 'text-green-400' : 'text-slate-600'}`}>
+                    {s.available ? 'ready' : 'unavailable'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Authorized paths */}
@@ -189,18 +252,77 @@ export default function Settings() {
         </div>
       </section>
 
+      {/* Nmap */}
+      <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">Nmap</h2>
+          <ScannerDot available={nmapAvailable} loading={healthQ.isFetching} />
+          <span className={`text-xs ${nmapAvailable ? 'text-green-400' : 'text-slate-500'}`}>
+            {nmapAvailable ? 'installed' : 'not found'}
+          </span>
+        </div>
+
+        {!nmapAvailable && (
+          <p className="text-xs text-slate-500">
+            Install with:{' '}
+            <code className="font-mono text-slate-400">brew install nmap</code>
+          </p>
+        )}
+
+        <div>
+          <label className="block text-xs text-slate-500 mb-2">Scan Profile</label>
+          <div className="grid grid-cols-2 gap-2">
+            {NMAP_PROFILES.map(p => (
+              <button
+                key={p.id}
+                onClick={() => setNmapConfig(c => ({ ...c, profile: p.id }))}
+                className={`p-2 rounded border text-left transition-colors ${
+                  nmapConfig.profile === p.id
+                    ? 'bg-teal-900/40 border-teal-700 text-teal-200'
+                    : 'bg-slate-800 border-slate-700 text-slate-400 hover:border-slate-600'
+                }`}
+              >
+                <div className="text-xs font-semibold">{p.label}</div>
+                <div className="text-[10px] text-slate-500 mt-0.5">{p.desc}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">Extra Args <span className="text-slate-600">(optional)</span></label>
+          <input
+            type="text"
+            value={nmapConfig.extra_args}
+            onChange={e => setNmapConfig(c => ({ ...c, extra_args: e.target.value }))}
+            placeholder="--script=vuln --host-timeout 30s"
+            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-teal-600"
+          />
+        </div>
+
+        <button
+          onClick={saveNmapConfig}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"
+        >
+          <Save className="h-3.5 w-3.5" />
+          {nmapSaved ? 'Saved!' : 'Save'}
+        </button>
+      </section>
+
       {/* OWASP ZAP */}
       <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
         <div className="flex items-center gap-2">
           <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">OWASP ZAP</h2>
-          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${zapConfigured ? 'bg-teal-400' : 'bg-slate-600'}`} />
-          <span className={`text-xs ${zapConfigured ? 'text-teal-400' : 'text-slate-600'}`}>
-            {zapConfigured ? 'configured' : 'not configured'}
+          <ScannerDot available={zapAvailable} loading={healthQ.isFetching} />
+          <span className={`text-xs ${zapAvailable ? 'text-green-400' : 'text-slate-500'}`}>
+            {zapAvailable ? 'connected' : 'not connected'}
           </span>
         </div>
         <p className="text-xs text-slate-500">
-          Connect to a running ZAP daemon. Start with:{' '}
-          <code className="font-mono text-slate-400">docker run -u zap -p 8080:8080 ghcr.io/zaproxy/zaproxy:stable zap.sh -daemon -port 8080 -config api.disablekey=true</code>
+          Start ZAP daemon:{' '}
+          <code className="font-mono text-slate-400 break-all">
+            java -jar zap-*.jar -daemon -host 127.0.0.1 -port 8090 -dir /tmp/zap-home -config api.disablekey=true
+          </code>
         </p>
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -245,14 +367,16 @@ export default function Settings() {
       <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
         <div className="flex items-center gap-2">
           <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">OpenVAS / GVM</h2>
-          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${openVasConfigured ? 'bg-teal-400' : 'bg-slate-600'}`} />
-          <span className={`text-xs ${openVasConfigured ? 'text-teal-400' : 'text-slate-600'}`}>
-            {openVasConfigured ? 'configured' : 'not configured'}
+          <ScannerDot available={openvasAvailable} loading={healthQ.isFetching} />
+          <span className={`text-xs ${openvasAvailable ? 'text-green-400' : 'text-slate-500'}`}>
+            {openvasAvailable ? 'connected' : 'not connected'}
           </span>
         </div>
         <p className="text-xs text-slate-500">
-          Connect to a GVM daemon. Start with:{' '}
-          <code className="font-mono text-slate-400">docker run -d --name openvas -p 9390:9390 greenbone/community-edition</code>
+          Start with Docker (initialises in ~10 min on first run):{' '}
+          <code className="font-mono text-slate-400 break-all">
+            docker run -d --name openvas -p 9390:9390 -p 9392:9392 securecompliance/gvm
+          </code>
         </p>
         <div className="grid grid-cols-2 gap-2">
           <div>
@@ -294,13 +418,27 @@ export default function Settings() {
             />
           </div>
         </div>
-        <button
-          onClick={saveOpenVasConfig}
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"
-        >
-          <Save className="h-3.5 w-3.5" />
-          {openVasSaved ? 'Saved!' : 'Save'}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={saveOpenVasConfig}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"
+          >
+            <Save className="h-3.5 w-3.5" />
+            {openVasSaved ? 'Saved!' : 'Save'}
+          </button>
+          <button
+            onClick={() => healthQ.refetch()}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Test Connection
+          </button>
+        </div>
+        {!openvasAvailable && (
+          <p className="text-[10px] text-slate-600">
+            Container is running at localhost:9390 — GVM initialises NVT feeds on first start (~10 min). Watch logs: <code className="font-mono">docker logs -f openvas</code>
+          </p>
+        )}
       </section>
 
       {/* About */}

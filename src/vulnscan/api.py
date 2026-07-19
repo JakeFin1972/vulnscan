@@ -47,6 +47,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from .easm import parse_file as _easm_parse_file, score_vulnerabilities as _easm_score
+from .easm.enrichment import enrich_asset_vulns as _enrich_asset_vulns
 from .easm.scoring import score_to_grade as _score_to_grade
 from .harness import run_test
 from .languages.generic_backend import load_backends_from_defs, YamlBackend
@@ -173,6 +174,22 @@ def _init_db() -> None:
                 FOREIGN KEY(asset_id) REFERENCES easm_assets(id)
             )
         """)
+        # ── Add enrichment columns if they don't exist (idempotent migrations) ──
+        for col, coldef in [
+            ("cvss_vector",      "TEXT"),
+            ("epss_score",       "REAL"),
+            ("epss_percentile",  "REAL"),
+            ("kev",              "INTEGER DEFAULT 0"),
+            ("exploit_maturity", "TEXT"),
+            ("exploit_insight",  "TEXT"),
+        ]:
+            try:
+                conn.execute(
+                    f"ALTER TABLE easm_vulnerabilities ADD COLUMN {col} {coldef}"
+                )
+            except Exception:  # column already exists
+                pass
+
         conn.execute("""
             CREATE TABLE IF NOT EXISTS easm_scores (
                 id            TEXT PRIMARY KEY,
@@ -967,6 +984,161 @@ async def easm_ingest(
         "asset_id":    asset_id,
         "asset":       asset,
     }
+
+
+# ── Ingest from dynamic scan ─────────────────────────────────────────────────
+
+class IngestScanRequest(BaseModel):
+    asset:      str
+    asset_type: str = "domain"
+    label:      str | None = None
+
+# Map dynamic-scanner tool names to EASM source_tool enum
+_TOOL_MAP: dict[str, str] = {
+    "nmap":    "nmap",
+    "nuclei":  "nuclei",
+    "zap":     "zap",
+    "openvas": "openvas",
+    "http":    "manual",
+    "api":     "manual",
+    "mcp":     "manual",
+}
+
+
+@app.post("/easm/ingest-scan/{scan_id}", status_code=201)
+def easm_ingest_dynamic_scan(scan_id: str, req: IngestScanRequest):
+    """Import all findings from a completed dynamic scan into EASM.
+
+    Reads `dynamic_findings` for the given scan_id, upserts the asset and
+    vulnerabilities using the same fingerprint logic as file-based ingest.
+    """
+    with _db() as conn:
+        scan_row = conn.execute(
+            "SELECT * FROM dynamic_scans WHERE id=?", (scan_id,)
+        ).fetchone()
+        if scan_row is None:
+            raise HTTPException(status_code=404, detail="Dynamic scan not found")
+
+        rows = conn.execute(
+            "SELECT * FROM dynamic_findings WHERE scan_id=?", (scan_id,)
+        ).fetchall()
+
+    if not rows:
+        return {"imported": 0, "asset_id": None, "message": "Scan has no findings to ingest."}
+
+    # Skip scanner-error / scanner-unavailable info findings
+    findings_to_import = [
+        r for r in rows
+        if not (r["severity"] == "info" and r["category"] in ("scanner_error", "scanner_unavailable", "network_error"))
+    ]
+
+    if not findings_to_import:
+        return {"imported": 0, "asset_id": None, "message": "No actionable findings (only scanner errors)."}
+
+    now = _now_iso()
+    asset      = req.asset
+    asset_type = req.asset_type
+    label      = req.label
+
+    with _db() as conn:
+        # Upsert asset
+        existing = conn.execute(
+            "SELECT id FROM easm_assets WHERE identifier=?", (asset,)
+        ).fetchone()
+
+        if existing:
+            asset_id = existing["id"]
+            conn.execute(
+                "UPDATE easm_assets SET updated_at=datetime('now'), "
+                "label=COALESCE(?, label) WHERE id=?",
+                (label, asset_id),
+            )
+        else:
+            asset_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO easm_assets (id, identifier, asset_type, label, tags) "
+                "VALUES (?, ?, ?, ?, '[]')",
+                (asset_id, asset, asset_type, label),
+            )
+
+        imported = 0
+        for r in findings_to_import:
+            source_tool = _TOOL_MAP.get(r["tool"], "manual")
+            existing_vuln = conn.execute(
+                """SELECT id FROM easm_vulnerabilities
+                   WHERE asset_id=? AND source_tool=? AND name=?
+                     AND COALESCE(port, -1)=COALESCE(?, -1)
+                     AND COALESCE(cve, '')=COALESCE(?, '')""",
+                (asset_id, source_tool, r["name"], r["port"], r["cve"] or ""),
+            ).fetchone()
+
+            if existing_vuln:
+                conn.execute(
+                    "UPDATE easm_vulnerabilities SET last_seen_at=? WHERE id=?",
+                    (now, existing_vuln["id"]),
+                )
+            else:
+                conn.execute(
+                    """INSERT INTO easm_vulnerabilities
+                       (id, asset_id, source_tool, source_file, name, description,
+                        severity, cvss_score, cve, cwe, category, port, protocol,
+                        url, evidence, remediation, discovered_at, last_seen_at,
+                        resolved_at, status)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        str(uuid.uuid4()), asset_id,
+                        source_tool, f"dynamic_scan:{scan_id}",
+                        r["name"], r["description"],
+                        r["severity"], None, r["cve"], None, r["category"],
+                        r["port"], None, r["url"], r["evidence"], r["remediation"],
+                        now, now, None, "open",
+                    ),
+                )
+                imported += 1
+
+    return {
+        "imported":   imported,
+        "skipped":    len(rows) - len(findings_to_import),
+        "asset_id":   asset_id,
+        "asset":      asset,
+    }
+
+
+def _now_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+# ── Enrichment endpoint ──────────────────────────────────────────────────────
+
+def _run_enrich(asset_id: str, force: bool) -> None:
+    """Background task: enrich all vulns for an asset with NVD/EPSS data."""
+    conn = _db()
+    try:
+        _enrich_asset_vulns(asset_id, conn, force=force)
+    finally:
+        conn.close()
+
+
+@app.post("/easm/enrich/{asset_id}", status_code=202)
+def easm_enrich_asset(asset_id: str, bg: BackgroundTasks, force: bool = False):
+    """Trigger background enrichment of all vulnerabilities for an asset.
+
+    Fetches CVSS details from NVD and EPSS exploitation probability from FIRST.
+    Non-CVE findings receive a static exploit profile based on their category.
+
+    Set ?force=true to re-enrich already-enriched rows.
+    Returns immediately — enrichment runs in the background.
+    """
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT id FROM easm_assets WHERE id=?", (asset_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Asset not found")
+
+    bg.add_task(_run_enrich, asset_id, force)
+    return {"asset_id": asset_id, "status": "enrichment_started", "force": force}
 
 
 # ── Vulnerability list + status update ───────────────────────────────────────
