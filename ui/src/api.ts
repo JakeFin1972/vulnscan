@@ -114,12 +114,14 @@ export const startDynamicScan = (
   target: string,
   target_type: TargetType,
   tools?: ScanTool[],
+  options?: Record<string, unknown>,
 ) =>
   request<DynamicScan>('POST', '/dynamic-scans', {
     target,
     target_type,
     tools,
     authorized: true,
+    options,
   })
 
 export const listDynamicScans = () =>

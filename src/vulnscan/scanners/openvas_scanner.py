@@ -157,11 +157,23 @@ def _classify_nvt(name: str, cve: str) -> str:
     return "vulnerability"
 
 
-def scan(target: str, timeout: int = _OV_TIMEOUT) -> list[DynamicFinding]:
+def scan(
+    target: str,
+    timeout: int = _OV_TIMEOUT,
+    host: str | None = None,
+    port: int | None = None,
+    user: str | None = None,
+    password: str | None = None,
+) -> list[DynamicFinding]:
     """Run a GVM full scan against `target` (host or CIDR).
 
     Returns [] with an info finding if GVM is not installed or not reachable.
     """
+    ov_host = host or _OV_HOST
+    ov_port = port or _OV_PORT
+    ov_user = user or _OV_USER
+    ov_pass = password or _OV_PASSWORD
+
     if not _GVM_AVAILABLE:
         return [DynamicFinding(
             tool="openvas", target=target,
@@ -178,8 +190,9 @@ def scan(target: str, timeout: int = _OV_TIMEOUT) -> list[DynamicFinding]:
     target_id: str | None = None
 
     try:
-        with _connect() as gmp:
-            gmp.authenticate(_OV_USER, _OV_PASSWORD)
+        conn = TLSConnection(hostname=ov_host, port=ov_port)
+        with Gmp(connection=conn, transform=EtreeTransform()) as gmp:
+            gmp.authenticate(ov_user, ov_pass)
 
             config_id  = _find_config_id(gmp)
             scanner_id = _find_scanner_id(gmp)
@@ -234,7 +247,7 @@ def scan(target: str, timeout: int = _OV_TIMEOUT) -> list[DynamicFinding]:
                 tool="openvas", target=target,
                 name="GVM daemon not reachable",
                 description=(
-                    f"Could not connect to GVM at {_OV_HOST}:{_OV_PORT}: {exc}\n"
+                    f"Could not connect to GVM at {ov_host}:{ov_port}: {exc}\n"
                     f"Start with Docker: docker run -d -p 9390:9390 greenbone/community-edition"
                 ),
                 severity="info", category="scanner_unavailable",

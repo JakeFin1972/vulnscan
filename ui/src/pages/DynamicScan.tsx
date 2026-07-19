@@ -214,6 +214,21 @@ function ScanRow({
   )
 }
 
+// ── External scanner options loader ──────────────────────────────────────────
+
+function loadExternalScannerOptions(): Record<string, unknown> {
+  const opts: Record<string, unknown> = {}
+  try {
+    const zap = JSON.parse(localStorage.getItem('vulnscan_zap_config') ?? 'null')
+    if (zap) opts['zap'] = zap
+  } catch {}
+  try {
+    const ov = JSON.parse(localStorage.getItem('vulnscan_openvas_config') ?? 'null')
+    if (ov) opts['openvas'] = ov
+  } catch {}
+  return opts
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const TOOLS_BY_TYPE: Record<TargetType, ScanTool[]> = {
@@ -276,7 +291,12 @@ export default function DynamicScanPage() {
 
   // Mutation
   const startMutation = useMutation({
-    mutationFn: () => startDynamicScan(target.trim(), targetType, selectedTools),
+    mutationFn: () => startDynamicScan(
+      target.trim(),
+      targetType,
+      selectedTools,
+      loadExternalScannerOptions(),
+    ),
     onSuccess: (scan) => {
       qc.invalidateQueries({ queryKey: ['dynamic-scans'] })
       setActiveScanId(scan.id)

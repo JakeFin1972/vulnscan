@@ -159,11 +159,18 @@ def scan(
     active: bool = True,
     ajax_spider: bool = False,
     timeout: int = 600,
+    host: str | None = None,
+    port: int | None = None,
+    api_key: str | None = None,
 ) -> list[DynamicFinding]:
     """Spider + optionally active-scan `target_url` using ZAP.
 
     Returns [] with an info finding if ZAP is not installed or not running.
     """
+    zap_host = host or _ZAP_HOST
+    zap_port = port or _ZAP_PORT
+    zap_key  = api_key if api_key is not None else _ZAP_API_KEY
+
     if not _ZAP_AVAILABLE:
         print("warning: zaproxy package not installed", file=sys.stderr)
         return [DynamicFinding(
@@ -174,14 +181,16 @@ def scan(
         )]
 
     try:
-        zap = _connect()
+        proxies = {"http": f"http://{zap_host}:{zap_port}",
+                   "https": f"http://{zap_host}:{zap_port}"}
+        zap = ZAPv2(apikey=zap_key, proxies=proxies)
         version = zap.core.version()
     except Exception as exc:  # noqa: BLE001
         return [DynamicFinding(
             tool="zap", target=target_url,
             name="ZAP daemon not reachable",
             description=(
-                f"Could not connect to ZAP at {_ZAP_HOST}:{_ZAP_PORT}: {exc}\n"
+                f"Could not connect to ZAP at {zap_host}:{zap_port}: {exc}\n"
                 f"Start ZAP with: docker run -u zap -p 8080:8080 "
                 f"ghcr.io/zaproxy/zaproxy:stable zap.sh -daemon -port 8080 "
                 f"-config api.disablekey=true\n"

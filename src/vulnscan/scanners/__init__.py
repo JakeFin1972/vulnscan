@@ -77,11 +77,23 @@ def run_dynamic_scan(
                 url = target
             active = tool_opts.get("active", True)
             ajax   = tool_opts.get("ajax_spider", False)
-            findings.extend(zap_scanner.scan(url, active=active, ajax_spider=ajax))
+            findings.extend(zap_scanner.scan(
+                url, active=active, ajax_spider=ajax,
+                host=tool_opts.get("host"),
+                port=tool_opts.get("port"),
+                api_key=tool_opts.get("api_key"),
+            ))
 
         elif tool == "openvas":
             host = _url_to_host(target) if target_type == "url" else target
-            findings.extend(openvas_scanner.scan(host))
+            tool_opts = opts.get("openvas", {})
+            findings.extend(openvas_scanner.scan(
+                host,
+                host=tool_opts.get("host"),
+                port=tool_opts.get("port"),
+                user=tool_opts.get("user"),
+                password=tool_opts.get("password"),
+            ))
 
         elif tool == "mcp":
             url = target if target.startswith("http") else f"http://{target}"

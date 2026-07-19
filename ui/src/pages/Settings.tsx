@@ -5,10 +5,41 @@ import { health } from '@/api'
 
 const API_URL_KEY = 'vulnscan_api_url'
 const PATHS_KEY = 'vulnscan_authorized_paths'
+const ZAP_CONFIG_KEY = 'vulnscan_zap_config'
+const OPENVAS_CONFIG_KEY = 'vulnscan_openvas_config'
 
 function loadPaths(): string[] {
   try { return JSON.parse(localStorage.getItem(PATHS_KEY) ?? '[]') as string[] }
   catch { return [] }
+}
+
+interface ZapConfig {
+  host: string
+  port: string
+  api_key: string
+}
+
+interface OpenVasConfig {
+  host: string
+  port: string
+  user: string
+  password: string
+}
+
+function loadZapConfig(): ZapConfig {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ZAP_CONFIG_KEY) ?? 'null')
+    if (stored) return stored as ZapConfig
+  } catch {}
+  return { host: 'localhost', port: '8080', api_key: '' }
+}
+
+function loadOpenVasConfig(): OpenVasConfig {
+  try {
+    const stored = JSON.parse(localStorage.getItem(OPENVAS_CONFIG_KEY) ?? 'null')
+    if (stored) return stored as OpenVasConfig
+  } catch {}
+  return { host: 'localhost', port: '9390', user: 'admin', password: 'admin' }
 }
 
 export default function Settings() {
@@ -18,6 +49,11 @@ export default function Settings() {
   const [saved, setSaved] = useState(false)
   const [paths, setPaths] = useState<string[]>(loadPaths)
   const [newPath, setNewPath] = useState('')
+
+  const [zapConfig, setZapConfig] = useState<ZapConfig>(loadZapConfig)
+  const [zapSaved, setZapSaved] = useState(false)
+  const [openVasConfig, setOpenVasConfig] = useState<OpenVasConfig>(loadOpenVasConfig)
+  const [openVasSaved, setOpenVasSaved] = useState(false)
 
   const healthQ = useQuery({
     queryKey: ['health', apiUrl],
@@ -47,6 +83,21 @@ export default function Settings() {
     setPaths(updated)
     localStorage.setItem(PATHS_KEY, JSON.stringify(updated))
   }
+
+  function saveZapConfig() {
+    localStorage.setItem(ZAP_CONFIG_KEY, JSON.stringify(zapConfig))
+    setZapSaved(true)
+    setTimeout(() => setZapSaved(false), 2000)
+  }
+
+  function saveOpenVasConfig() {
+    localStorage.setItem(OPENVAS_CONFIG_KEY, JSON.stringify(openVasConfig))
+    setOpenVasSaved(true)
+    setTimeout(() => setOpenVasSaved(false), 2000)
+  }
+
+  const zapConfigured = zapConfig.host !== 'localhost' || zapConfig.api_key !== '' || zapConfig.port !== '8080'
+  const openVasConfigured = openVasConfig.host !== 'localhost' || openVasConfig.port !== '9390' || openVasConfig.user !== 'admin'
 
   return (
     <div className="p-6 max-w-xl space-y-6">
@@ -136,6 +187,120 @@ export default function Settings() {
             Add
           </button>
         </div>
+      </section>
+
+      {/* OWASP ZAP */}
+      <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">OWASP ZAP</h2>
+          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${zapConfigured ? 'bg-teal-400' : 'bg-slate-600'}`} />
+          <span className={`text-xs ${zapConfigured ? 'text-teal-400' : 'text-slate-600'}`}>
+            {zapConfigured ? 'configured' : 'not configured'}
+          </span>
+        </div>
+        <p className="text-xs text-slate-500">
+          Connect to a running ZAP daemon. Start with:{' '}
+          <code className="font-mono text-slate-400">docker run -u zap -p 8080:8080 ghcr.io/zaproxy/zaproxy:stable zap.sh -daemon -port 8080 -config api.disablekey=true</code>
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Host</label>
+            <input
+              type="text"
+              value={zapConfig.host}
+              onChange={e => setZapConfig(c => ({ ...c, host: e.target.value }))}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Port</label>
+            <input
+              type="text"
+              value={zapConfig.port}
+              onChange={e => setZapConfig(c => ({ ...c, port: e.target.value }))}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">API Key</label>
+          <input
+            type="text"
+            value={zapConfig.api_key}
+            onChange={e => setZapConfig(c => ({ ...c, api_key: e.target.value }))}
+            placeholder="leave empty if disabled"
+            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-teal-600"
+          />
+        </div>
+        <button
+          onClick={saveZapConfig}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"
+        >
+          <Save className="h-3.5 w-3.5" />
+          {zapSaved ? 'Saved!' : 'Save'}
+        </button>
+      </section>
+
+      {/* OpenVAS / GVM */}
+      <section className="bg-slate-900 border border-slate-800 rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">OpenVAS / GVM</h2>
+          <span className={`h-2 w-2 rounded-full flex-shrink-0 ${openVasConfigured ? 'bg-teal-400' : 'bg-slate-600'}`} />
+          <span className={`text-xs ${openVasConfigured ? 'text-teal-400' : 'text-slate-600'}`}>
+            {openVasConfigured ? 'configured' : 'not configured'}
+          </span>
+        </div>
+        <p className="text-xs text-slate-500">
+          Connect to a GVM daemon. Start with:{' '}
+          <code className="font-mono text-slate-400">docker run -d --name openvas -p 9390:9390 greenbone/community-edition</code>
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Host</label>
+            <input
+              type="text"
+              value={openVasConfig.host}
+              onChange={e => setOpenVasConfig(c => ({ ...c, host: e.target.value }))}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Port</label>
+            <input
+              type="text"
+              value={openVasConfig.port}
+              onChange={e => setOpenVasConfig(c => ({ ...c, port: e.target.value }))}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+            />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Username</label>
+            <input
+              type="text"
+              value={openVasConfig.user}
+              onChange={e => setOpenVasConfig(c => ({ ...c, user: e.target.value }))}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Password</label>
+            <input
+              type="password"
+              value={openVasConfig.password}
+              onChange={e => setOpenVasConfig(c => ({ ...c, password: e.target.value }))}
+              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+            />
+          </div>
+        </div>
+        <button
+          onClick={saveOpenVasConfig}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded border border-slate-700 transition-colors"
+        >
+          <Save className="h-3.5 w-3.5" />
+          {openVasSaved ? 'Saved!' : 'Save'}
+        </button>
       </section>
 
       {/* About */}
