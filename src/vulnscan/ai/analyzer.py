@@ -1,15 +1,10 @@
-"""Claude AI-powered vulnerability analysis.
+"""AI-powered vulnerability analysis — supports Anthropic Claude and OpenAI GPT.
 
-Provides deep security analysis for both static code findings and dynamic
-scan findings. Uses claude-sonnet-4-6 for cost-effective, fast analysis.
+Provider selection (first available wins):
+  1. OPENAI_API_KEY   → GPT-4o (gpt-4o)
+  2. ANTHROPIC_API_KEY → Claude Sonnet 4.6 (claude-sonnet-4-6)
 
-The analyzer produces:
-  - Confirmed/false-positive verdict with reasoning
-  - Exploit difficulty (trivial / moderate / complex / not-exploitable)
-  - Step-by-step attack scenario tailored to the specific code
-  - Concrete remediation code (language-aware)
-  - CVSS v3.1 vector estimate
-  - Confidence-adjusted severity
+All functions raise RuntimeError if no provider is available.
 """
 from __future__ import annotations
 
@@ -19,8 +14,9 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-_MODEL = "claude-sonnet-4-6"
-_MAX_TOKENS = 2048
+_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+_OPENAI_MODEL    = "gpt-4o"
+_MAX_TOKENS      = 2048
 
 _SYSTEM_PROMPT = textwrap.dedent("""\
 You are a senior application security engineer and penetration tester.
@@ -31,25 +27,92 @@ false positives, assess actual exploitability, and provide concrete fixes.
 Always respond in the exact JSON format requested — no markdown, no prose outside JSON.
 """)
 
+# Public: which model string the UI should show
+_MODEL = _OPENAI_MODEL  # updated dynamically by _active_provider()
 
-def _client():
-    try:
-        import anthropic
-    except ImportError as exc:
-        raise RuntimeError("anthropic SDK not installed. Run: pip install anthropic") from exc
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY environment variable is not set.")
-    return anthropic.Anthropic(api_key=api_key)
+
+def _active_provider() -> str:
+    """Return 'openai' or 'anthropic' based on which key is set, or raise."""
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return "anthropic"
+    raise RuntimeError(
+        "No AI provider configured. Set OPENAI_API_KEY or ANTHROPIC_API_KEY."
+    )
 
 
 def is_available() -> bool:
-    """Return True if the Anthropic SDK is installed and an API key is configured."""
+    """True if at least one AI provider SDK + key is configured."""
     try:
-        import anthropic  # noqa: F401
-        return bool(os.environ.get("ANTHROPIC_API_KEY", ""))
-    except ImportError:
+        provider = _active_provider()
+    except RuntimeError:
         return False
+    if provider == "openai":
+        try:
+            import openai  # noqa: F401
+            return True
+        except ImportError:
+            return False
+    else:
+        try:
+            import anthropic  # noqa: F401
+            return True
+        except ImportError:
+            return False
+
+
+def active_model() -> str:
+    """Return the model name for the active provider."""
+    try:
+        p = _active_provider()
+        return _OPENAI_MODEL if p == "openai" else _ANTHROPIC_MODEL
+    except RuntimeError:
+        return "none"
+
+
+def _call_ai(prompt: str) -> str:
+    """Send prompt to the active provider and return raw text response."""
+    provider = _active_provider()
+
+    if provider == "openai":
+        try:
+            import openai
+        except ImportError as exc:
+            raise RuntimeError("openai SDK not installed. Run: pip install openai") from exc
+        client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        response = client.chat.completions.create(
+            model=_OPENAI_MODEL,
+            max_tokens=_MAX_TOKENS,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user",   "content": prompt},
+            ],
+        )
+        return response.choices[0].message.content.strip()
+
+    else:  # anthropic
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise RuntimeError("anthropic SDK not installed. Run: pip install anthropic") from exc
+        client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        response = client.messages.create(
+            model=_ANTHROPIC_MODEL,
+            max_tokens=_MAX_TOKENS,
+            system=_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip()
+
+
+def _parse_json(raw: str) -> dict:
+    """Strip accidental markdown fences and parse JSON."""
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    return json.loads(raw.strip())
 
 
 # ── Static finding analysis ───────────────────────────────────────────────────
@@ -59,20 +122,6 @@ def analyze_static_finding(
     code_snippet: str | None = None,
     scan_root: str | None = None,
 ) -> dict[str, Any]:
-    """Analyse a single static (code analysis) source/sink finding.
-
-    Returns a dict with keys:
-      verdict          "confirmed" | "false_positive" | "needs_review"
-      severity         "critical" | "high" | "medium" | "low" | "info"
-      confidence       int  0-100
-      exploit_difficulty  "trivial" | "low" | "moderate" | "high" | "not_exploitable"
-      exploit_scenario    str  — step-by-step attack narrative
-      data_flow           str  — concise A → B → C description
-      remediation_summary str  — concise fix
-      remediation_code    str  — concrete code example (or "")
-      cvss_vector         str  — CVSS 3.1 vector (AV:.../...)
-      reasoning           str  — why this verdict
-    """
     snippet_block = ""
     if code_snippet:
         snippet_block = f"\n\nCode snippet (lines around finding):\n```\n{code_snippet}\n```"
@@ -106,35 +155,17 @@ def analyze_static_finding(
     }}
     """)
 
-    client = _client()
-    response = client.messages.create(
-        model=_MODEL,
-        max_tokens=_MAX_TOKENS,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = response.content[0].text.strip()
-    # Strip accidental markdown fences
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw)
+    raw = _call_ai(prompt)
+    return _parse_json(raw)
 
 
 # ── Dynamic finding analysis ──────────────────────────────────────────────────
 
 def analyze_dynamic_finding(finding: dict[str, Any]) -> dict[str, Any]:
-    """Analyse a single dynamic (network/DAST) finding.
-
-    Returns the same structure as analyze_static_finding plus:
-      attack_vector   str  — network-level attack path
-      affected_system str  — what is at risk
-    """
-    evidence = finding.get("evidence", "")
+    evidence    = finding.get("evidence", "")
     description = finding.get("description", "")
-    cve = finding.get("cve", "")
-    cwe = finding.get("cwe", "")
+    cve         = finding.get("cve", "")
+    cwe         = finding.get("cwe", "")
 
     prompt = textwrap.dedent(f"""\
     Analyse this dynamic security finding from an automated scanner and respond in JSON.
@@ -168,19 +199,8 @@ def analyze_dynamic_finding(finding: dict[str, Any]) -> dict[str, Any]:
     }}
     """)
 
-    client = _client()
-    response = client.messages.create(
-        model=_MODEL,
-        max_tokens=_MAX_TOKENS,
-        system=_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw)
+    raw = _call_ai(prompt)
+    return _parse_json(raw)
 
 
 # ── Scan boost: taint analysis on source-sink pairs ──────────────────────────
@@ -189,15 +209,9 @@ def boost_scan(
     scan_report: dict[str, Any],
     max_pairs: int = 20,
 ) -> list[dict[str, Any]]:
-    """AI taint analysis on source-sink candidate pairs from a static scan.
-
-    Reads the candidate_pairs from the scan report, fetches code context,
-    and asks Claude to determine if each pair is a confirmed data-flow path.
-
-    Returns a list of enriched pair dicts with AI analysis fields.
-    """
-    pairs = scan_report.get("candidate_pairs", [])[:max_pairs]
-    root  = scan_report.get("root", "")
+    """AI taint analysis on source-sink candidate pairs from a static scan."""
+    pairs   = scan_report.get("candidate_pairs", [])[:max_pairs]
+    root    = scan_report.get("root", "")
     results = []
 
     for pair in pairs:
@@ -250,27 +264,16 @@ def boost_scan(
         """)
 
         try:
-            client = _client()
-            response = client.messages.create(
-                model=_MODEL,
-                max_tokens=_MAX_TOKENS,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = response.content[0].text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            ai = json.loads(raw)
+            raw = _call_ai(prompt)
+            ai  = _parse_json(raw)
         except Exception as exc:  # noqa: BLE001
             ai = {"error": str(exc), "verdict": "needs_review"}
 
         results.append({
-            "source": src,
-            "sink": sink,
+            "source":    src,
+            "sink":      sink,
             "proximity": pair.get("proximity"),
-            "ai": ai,
+            "ai":        ai,
         })
 
     return results

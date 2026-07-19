@@ -808,18 +808,27 @@ class AiBoostRequest(BaseModel):
 
 @app.get("/ai/status")
 def ai_status():
+    available = _ai.is_available()
+    provider  = "none"
+    if available:
+        try:
+            provider = _ai._active_provider()
+        except Exception:
+            pass
     return {
-        "available": _ai.is_available(),
-        "model": _ai._MODEL,
-        "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "available":      available,
+        "model":          _ai.active_model(),
+        "provider":       provider,
+        "openai_key_set": bool(os.environ.get("OPENAI_API_KEY")),
+        "anthropic_key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
     }
 
 
 @app.post("/ai/analyze")
 def ai_analyze(req: AiAnalyzeRequest):
-    """Analyze a static or dynamic finding with Claude AI."""
+    """Analyze a static or dynamic finding with AI."""
     if not _ai.is_available():
-        raise HTTPException(status_code=503, detail="AI not available: set ANTHROPIC_API_KEY")
+        raise HTTPException(status_code=503, detail="AI not available: set OPENAI_API_KEY or ANTHROPIC_API_KEY")
 
     if req.finding_id:
         with _db() as conn:
@@ -862,7 +871,7 @@ def ai_analyze(req: AiAnalyzeRequest):
 def ai_boost(req: AiBoostRequest):
     """Run AI taint analysis on all source-sink pairs in a static scan."""
     if not _ai.is_available():
-        raise HTTPException(status_code=503, detail="AI not available: set ANTHROPIC_API_KEY")
+        raise HTTPException(status_code=503, detail="AI not available: set OPENAI_API_KEY or ANTHROPIC_API_KEY")
 
     with _db() as conn:
         row = conn.execute("SELECT * FROM scans WHERE id = ?", (req.scan_id,)).fetchone()
@@ -884,6 +893,7 @@ def ai_boost(req: AiBoostRequest):
         "scan_id": req.scan_id,
         "pairs_analyzed": len(results),
         "confirmed": len(confirmed),
+        "model": _ai.active_model(),
         "results": results,
     }
 

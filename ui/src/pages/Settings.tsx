@@ -9,6 +9,7 @@ const ZAP_CONFIG_KEY = 'vulnscan_zap_config'
 const OPENVAS_CONFIG_KEY = 'vulnscan_openvas_config'
 const NMAP_CONFIG_KEY = 'vulnscan_nmap_config'
 const AI_KEY_KEY = 'vulnscan_anthropic_key'
+const OPENAI_KEY_KEY = 'vulnscan_openai_key'
 
 function loadPaths(): string[] {
   try { return JSON.parse(localStorage.getItem(PATHS_KEY) ?? '[]') as string[] }
@@ -85,8 +86,10 @@ export default function Settings() {
   const [nmapConfig, setNmapConfig] = useState<NmapConfig>(loadNmapConfig)
   const [nmapSaved, setNmapSaved] = useState(false)
   const [anthropicKey, setAnthropicKey] = useState(localStorage.getItem(AI_KEY_KEY) ?? '')
+  const [openaiKey, setOpenaiKey] = useState(localStorage.getItem(OPENAI_KEY_KEY) ?? '')
   const [aiKeySaved, setAiKeySaved] = useState(false)
-  const [showKey, setShowKey] = useState(false)
+  const [showAnthropic, setShowAnthropic] = useState(false)
+  const [showOpenai, setShowOpenai] = useState(false)
 
   const healthQ = useQuery({
     queryKey: ['health', apiUrl],
@@ -145,9 +148,10 @@ export default function Settings() {
   }
 
   function saveAiKey() {
-    localStorage.setItem(AI_KEY_KEY, anthropicKey)
-    // Propagate key to API server via a PUT /ai/config endpoint
-    // The key is stored in localStorage and the user must restart the API with it set
+    if (anthropicKey.trim()) localStorage.setItem(AI_KEY_KEY, anthropicKey)
+    else localStorage.removeItem(AI_KEY_KEY)
+    if (openaiKey.trim()) localStorage.setItem(OPENAI_KEY_KEY, openaiKey)
+    else localStorage.removeItem(OPENAI_KEY_KEY)
     setAiKeySaved(true)
     setTimeout(() => setAiKeySaved(false), 3000)
     aiStatusQ.refetch()
@@ -226,59 +230,100 @@ export default function Settings() {
         )}
       </section>
 
-      {/* Claude AI */}
+      {/* AI Integration */}
       <section className="bg-slate-900 border border-purple-800/40 rounded-lg p-4 space-y-3">
         <div className="flex items-center gap-2">
           <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-          <h2 className="text-xs font-medium text-purple-300 uppercase tracking-wider">Claude AI Integration</h2>
+          <h2 className="text-xs font-medium text-purple-300 uppercase tracking-wider">AI Integration</h2>
           {aiStatusQ.data?.available && (
             <span className="ml-auto text-xs text-green-400 flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-green-400 inline-block" /> Active · {aiStatusQ.data.model}
+              <span className="h-1.5 w-1.5 rounded-full bg-green-400 inline-block" />
+              Active · {aiStatusQ.data.provider === 'openai' ? 'OpenAI' : 'Anthropic'} · {aiStatusQ.data.model}
             </span>
           )}
           {aiStatusQ.data && !aiStatusQ.data.available && (
-            <span className="ml-auto text-xs text-slate-500">API key required</span>
+            <span className="ml-auto text-xs text-slate-500">No API key set</span>
           )}
         </div>
         <p className="text-xs text-slate-400 leading-relaxed">
-          Claude AI provides deep vulnerability analysis, exploit scenario generation, taint flow verification,
-          and AI-powered remediation code. Set your Anthropic API key below, then restart the API server
-          with <code className="font-mono text-purple-300/80">ANTHROPIC_API_KEY=&lt;key&gt;</code> in the environment.
+          AI provides deep vulnerability analysis, taint flow verification, exploit scenarios, and remediation code.
+          Set one key below, then restart the API server with that key in the environment.
+          <br />
+          <span className="text-purple-300/70">OpenAI is preferred if both keys are set.</span>
         </p>
-        <div className="space-y-2">
-          <label className="text-xs text-slate-500 block">Anthropic API Key</label>
+
+        {/* OpenAI key */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-slate-500 block flex items-center gap-2">
+            OpenAI API Key
+            {aiStatusQ.data?.openai_key_set && (
+              <span className="text-green-400 text-[10px]">✓ active on server</span>
+            )}
+          </label>
           <div className="flex items-center gap-2">
             <div className="flex-1 flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden focus-within:border-purple-600">
               <input
-                type={showKey ? 'text' : 'password'}
+                type={showOpenai ? 'text' : 'password'}
+                value={openaiKey}
+                onChange={e => setOpenaiKey(e.target.value)}
+                placeholder="sk-..."
+                className="flex-1 bg-transparent px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none"
+              />
+              <button onClick={() => setShowOpenai(v => !v)} className="px-2 text-slate-600 hover:text-slate-400 transition-colors">
+                {showOpenai ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Anthropic key */}
+        <div className="space-y-1.5">
+          <label className="text-xs text-slate-500 block flex items-center gap-2">
+            Anthropic API Key
+            {aiStatusQ.data?.anthropic_key_set && (
+              <span className="text-green-400 text-[10px]">✓ active on server</span>
+            )}
+          </label>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden focus-within:border-purple-600">
+              <input
+                type={showAnthropic ? 'text' : 'password'}
                 value={anthropicKey}
                 onChange={e => setAnthropicKey(e.target.value)}
                 placeholder="sk-ant-..."
                 className="flex-1 bg-transparent px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none"
               />
-              <button
-                onClick={() => setShowKey(v => !v)}
-                className="px-2 text-slate-600 hover:text-slate-400 transition-colors"
-              >
-                {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              <button onClick={() => setShowAnthropic(v => !v)} className="px-2 text-slate-600 hover:text-slate-400 transition-colors">
+                {showAnthropic ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
               </button>
             </div>
-            <button
-              onClick={saveAiKey}
-              disabled={!anthropicKey.trim()}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
-            >
-              <Save className="h-3.5 w-3.5" />
-              {aiKeySaved ? 'Saved!' : 'Save'}
-            </button>
           </div>
-          {aiKeySaved && (
-            <p className="text-xs text-yellow-400">
-              Key saved to local storage. Restart the API server with{' '}
-              <code className="font-mono">ANTHROPIC_API_KEY=&lt;key&gt; .venv/bin/uvicorn src.vulnscan.api:app</code>
-            </p>
-          )}
         </div>
+
+        <button
+          onClick={saveAiKey}
+          disabled={!openaiKey.trim() && !anthropicKey.trim()}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
+        >
+          <Save className="h-3.5 w-3.5" />
+          {aiKeySaved ? 'Saved!' : 'Save Keys'}
+        </button>
+
+        {aiKeySaved && (
+          <div className="text-xs text-yellow-400 space-y-1">
+            <p>Keys saved. Restart the API with the key in the environment:</p>
+            {openaiKey.trim() && (
+              <code className="block font-mono text-[10px] text-slate-400 bg-slate-950 px-2 py-1 rounded">
+                OPENAI_API_KEY=&lt;key&gt; PYTHONPATH=src .venv/bin/uvicorn vulnscan.api:app --port 8765
+              </code>
+            )}
+            {anthropicKey.trim() && !openaiKey.trim() && (
+              <code className="block font-mono text-[10px] text-slate-400 bg-slate-950 px-2 py-1 rounded">
+                ANTHROPIC_API_KEY=&lt;key&gt; PYTHONPATH=src .venv/bin/uvicorn vulnscan.api:app --port 8765
+              </code>
+            )}
+          </div>
+        )}
 
         {/* AI features list */}
         <div className="pt-2 border-t border-slate-800">

@@ -123,7 +123,7 @@ function ScanRow({
                 <span className="text-xs font-semibold text-purple-300">
                   AI Boost — {boostResult.confirmed}/{boostResult.pairs_analyzed} confirmed vulnerabilities
                 </span>
-                <span className="text-xs text-slate-500">claude-sonnet-4-6</span>
+                <span className="text-xs text-slate-500">{boostResult.model ?? 'ai'}</span>
               </div>
               {boostResult.results.map((r, i) => {
                 const ai = r.ai

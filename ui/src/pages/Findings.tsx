@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom'
 import {
   X, Loader2, ChevronRight, AlertTriangle, Code2, GitBranch,
   Zap, Wrench, ChevronDown, ChevronUp, ExternalLink, Globe, Server,
-  Sparkles, CheckCircle2, XCircle, HelpCircle, ShieldAlert,
+  Sparkles, CheckCircle2, XCircle, HelpCircle, ShieldAlert, Copy, Check,
 } from 'lucide-react'
 import {
   listFindings, listScans, listDynamicFindings, listDynamicScans,
@@ -15,6 +15,32 @@ import type { Finding, DynamicFinding, DynamicScan, Severity } from '@/types'
 import SeverityBadge from '@/components/SeverityBadge'
 import { getCategoryMeta } from '@/lib/categoryMeta'
 import { cn } from '@/lib/utils'
+
+// ── Copy button ───────────────────────────────────────────────────────────────
+
+function CopyButton({ text, className = '' }: { text: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+  function copy() {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+  return (
+    <button
+      onClick={copy}
+      title="Copy to clipboard"
+      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-xs transition-colors ${
+        copied
+          ? 'text-green-400 bg-green-900/30 border border-green-700/50'
+          : 'text-slate-500 hover:text-slate-300 bg-slate-800 border border-slate-700 hover:border-slate-500'
+      } ${className}`}
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? 'Copied!' : 'Copy'}
+    </button>
+  )
+}
 
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'info']
 
@@ -72,9 +98,10 @@ function FilterSelect({
   )
 }
 
-function Section({ icon: Icon, title, children }: {
+function Section({ icon: Icon, title, copyText, children }: {
   icon: React.ComponentType<{ className?: string }>
   title: string
+  copyText?: string
   children: React.ReactNode
 }) {
   return (
@@ -82,6 +109,7 @@ function Section({ icon: Icon, title, children }: {
       <div className="flex items-center gap-2 px-3 py-2 bg-slate-800/60 border-b border-slate-700/60">
         <Icon className="h-3.5 w-3.5 text-slate-400" />
         <span className="text-xs font-medium text-slate-300 uppercase tracking-wide">{title}</span>
+        {copyText && <CopyButton text={copyText} className="ml-auto" />}
       </div>
       <div className="p-3">{children}</div>
     </div>
@@ -111,8 +139,7 @@ function AiPanel({ analysis }: { analysis: AiAnalysis }) {
     <div className="rounded-lg border border-purple-700/50 bg-purple-900/10 overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 bg-purple-900/30 border-b border-purple-700/50">
         <Sparkles className="h-3.5 w-3.5 text-purple-400" />
-        <span className="text-xs font-medium text-purple-300 uppercase tracking-wide">Claude AI Analysis</span>
-        <span className="ml-auto text-xs text-purple-400/70">claude-sonnet-4-6</span>
+        <span className="text-xs font-medium text-purple-300 uppercase tracking-wide">AI Analysis</span>
       </div>
       <div className="p-3 space-y-3">
         {/* Verdict + difficulty row */}
@@ -170,7 +197,7 @@ function AiPanel({ analysis }: { analysis: AiAnalysis }) {
 
         {/* Remediation */}
         {analysis.remediation_summary && (
-          <Section icon={Wrench} title="AI Recommended Fix">
+          <Section icon={Wrench} title="AI Recommended Fix" copyText={analysis.remediation_code || analysis.remediation_summary}>
             <p className="text-xs text-slate-300 leading-relaxed mb-2">{analysis.remediation_summary}</p>
             {analysis.remediation_code && (
               <pre className="text-xs font-mono text-green-300 bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap leading-relaxed">{analysis.remediation_code}</pre>
@@ -260,8 +287,8 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
 
         {/* Vulnerable Code */}
         {finding.code_snippet && (
-          <Section icon={Code2} title="Vulnerable Code">
-            <pre className="text-xs font-mono text-slate-300 bg-slate-950 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre">{finding.code_snippet}</pre>
+          <Section icon={Code2} title="Vulnerable Code" copyText={finding.code_snippet}>
+            <pre className="text-xs font-mono text-red-300/80 bg-slate-950 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre">{finding.code_snippet}</pre>
             <div className="mt-1.5 font-mono text-xs text-slate-500 break-all">{finding.file}:{finding.line}</div>
           </Section>
         )}
@@ -298,8 +325,9 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
         </Section>
 
         {/* Recommended Fix */}
-        <Section icon={Wrench} title="Recommended Fix">
-          <p className="text-xs text-slate-300 leading-relaxed">{meta.recommendedFix}</p>
+        <Section icon={Wrench} title="Recommended Fix" copyText={meta.fixCode}>
+          <p className="text-xs text-slate-400 leading-relaxed mb-2">{meta.recommendedFix}</p>
+          <pre className="text-xs font-mono text-green-300 bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap leading-relaxed">{meta.fixCode}</pre>
         </Section>
 
         {/* AI error */}
@@ -427,7 +455,7 @@ function DynamicFindingRow({ f }: { f: DynamicFinding }) {
             </Section>
           )}
           {f.remediation && (
-            <Section icon={Wrench} title="Recommended Fix">
+            <Section icon={Wrench} title="Recommended Fix" copyText={f.remediation}>
               <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{f.remediation}</p>
             </Section>
           )}

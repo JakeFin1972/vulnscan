@@ -143,13 +143,16 @@ export interface AiBoostResponse {
   scan_id: string
   pairs_analyzed: number
   confirmed: number
+  model?: string
   results: AiBoostResult[]
 }
 
 export interface AiStatus {
   available: boolean
   model: string
-  api_key_set: boolean
+  provider: 'openai' | 'anthropic' | 'none'
+  openai_key_set: boolean
+  anthropic_key_set: boolean
 }
 
 export const aiStatus = () => request<AiStatus>('GET', '/ai/status')
