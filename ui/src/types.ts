@@ -25,6 +25,8 @@ export interface Finding {
   language: string
   severity: Severity
   pair_id?: string
+  confidence?: number
+  code_snippet?: string
 }
 
 export interface Language {

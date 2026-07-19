@@ -85,11 +85,21 @@ function Section({ icon: Icon, title, children }: {
 
 // ── Static finding detail panel ───────────────────────────────────────────────
 
+const CONFIDENCE_COLOR = (pct: number) =>
+  pct >= 90 ? 'text-green-400 bg-green-900/30 border-green-700/50'
+  : pct >= 75 ? 'text-teal-400 bg-teal-900/30 border-teal-700/50'
+  : 'text-yellow-400 bg-yellow-900/30 border-yellow-700/50'
+
 function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: () => void }) {
   const meta = getCategoryMeta(finding.category)
+  const confidence = finding.confidence ?? 75
+  const fileParts = finding.file.split('/')
+  const srcIdx = fileParts.indexOf('src')
+  const displayFile = srcIdx >= 0 ? fileParts.slice(srcIdx).join('/') : fileParts.slice(-3).join('/')
 
   return (
-    <div className="w-[480px] flex-shrink-0 border-l border-slate-800 bg-slate-900 flex flex-col overflow-hidden">
+    <div className="w-[520px] flex-shrink-0 border-l border-slate-800 bg-slate-900 flex flex-col overflow-hidden">
+      {/* Header */}
       <div className="flex items-start justify-between px-4 py-3 border-b border-slate-800 gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -97,10 +107,13 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
             <span className={`text-xs px-2 py-0.5 rounded border font-mono ${SEVERITY_COLOR[finding.severity as Severity] ?? SEVERITY_COLOR.info}`}>
               {meta.cwe}
             </span>
+            <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${CONFIDENCE_COLOR(confidence)}`}>
+              {confidence}% confidence
+            </span>
           </div>
           <div className="text-sm font-semibold text-slate-100 mt-1.5 leading-snug">{meta.title}</div>
-          <div className="font-mono text-xs text-teal-400 mt-0.5 truncate">
-            {shortPath(finding.file)}:<span className="text-teal-300">{finding.line}</span>
+          <div className="font-mono text-xs text-teal-400 mt-0.5">
+            <span className="text-slate-500">File: </span>{displayFile}:<span className="text-teal-300">{finding.line}</span>
           </div>
         </div>
         <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0 mt-0.5">
@@ -109,6 +122,7 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
       </div>
 
       <div className="overflow-y-auto flex-1 p-3 space-y-3">
+        {/* Meta badges */}
         <div className="flex flex-wrap gap-2 text-xs">
           <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">
             <span className="text-slate-500">kind: </span>{finding.kind}
@@ -121,51 +135,42 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
           </span>
         </div>
 
-        <Section icon={AlertTriangle} title="Vulnerability Description">
+        {/* Description */}
+        <Section icon={AlertTriangle} title="Description">
           <p className="text-xs text-slate-300 leading-relaxed">{meta.description}</p>
         </Section>
 
-        <Section icon={Code2} title="Affected Location">
-          <div className="space-y-1.5 text-xs">
-            <div><span className="text-slate-500">File: </span><span className="font-mono text-slate-200 break-all">{finding.file}</span></div>
-            <div><span className="text-slate-500">Line: </span><span className="font-mono text-teal-400">{finding.line}</span></div>
-            <div><span className="text-slate-500">Symbol: </span><span className="font-mono text-slate-200">{finding.name}</span></div>
-            {finding.pair_id && (
-              <div><span className="text-slate-500">Taint pair: </span><span className="font-mono text-slate-400 text-xs break-all">{finding.pair_id}</span></div>
-            )}
-          </div>
-        </Section>
+        {/* Vulnerable Code */}
+        {finding.code_snippet && (
+          <Section icon={Code2} title="Vulnerable Code">
+            <pre className="text-xs font-mono text-slate-300 bg-slate-950 rounded p-2 overflow-x-auto leading-relaxed whitespace-pre">{finding.code_snippet}</pre>
+            <div className="mt-1.5 font-mono text-xs text-slate-500 break-all">{finding.file}:{finding.line}</div>
+          </Section>
+        )}
 
+        {/* Data Flow */}
         <Section icon={GitBranch} title="Data Flow">
-          <div className="text-xs text-slate-300 leading-relaxed space-y-1">
+          <div className="text-xs font-mono text-slate-400">
             {finding.kind === 'source' ? (
-              <>
-                <div className="flex items-start gap-2">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 text-xs font-bold mt-0.5">S</span>
-                  <span><span className="font-mono text-slate-200">{finding.name}</span> — taint <span className="text-red-400 font-medium">source</span> at <span className="font-mono text-teal-400">{shortPath(finding.file)}:{finding.line}</span></span>
-                </div>
-                <div className="ml-2 border-l border-slate-700 pl-3 py-1 text-slate-500 text-xs">↓ tainted value propagates forward through the call graph</div>
-                <div className="flex items-start gap-2">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-orange-500/20 border border-orange-500/40 flex items-center justify-center text-orange-400 text-xs font-bold mt-0.5">?</span>
-                  <span className="text-slate-500">Sink location identified in paired finding</span>
-                </div>
-              </>
+              <span>
+                <span className="text-red-400">{finding.name}</span>
+                <span className="text-slate-600"> (HTTP handler, line {finding.line})</span>
+                <span className="text-slate-600"> → attacker input enters system → </span>
+                <span className="text-orange-400">sink</span>
+                <span className="text-slate-600"> (see paired sink finding)</span>
+              </span>
             ) : (
-              <>
-                <div className="flex items-start gap-2">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-slate-400 text-xs font-bold mt-0.5">S</span>
-                  <span className="text-slate-500">User-controlled input (paired source finding)</span>
-                </div>
-                <div className="ml-2 border-l border-slate-700 pl-3 py-1 text-slate-500 text-xs">↓ tainted value flows to sink</div>
-                <div className="flex items-start gap-2">
-                  <span className="flex-shrink-0 w-4 h-4 rounded-full bg-red-500/20 border border-red-500/40 flex items-center justify-center text-red-400 text-xs font-bold mt-0.5">K</span>
-                  <span><span className="font-mono text-slate-200">{finding.name}</span> — taint <span className="text-red-400 font-medium">sink</span> at <span className="font-mono text-teal-400">{shortPath(finding.file)}:{finding.line}</span></span>
-                </div>
-              </>
+              <span>
+                <span className="text-slate-500">HTTP handler</span>
+                <span className="text-slate-600"> → user-controlled data →{' '}</span>
+                <span className="text-red-400">{finding.name}</span>
+                <span className="text-slate-600"> ({finding.category}, line {finding.line})</span>
+              </span>
             )}
           </div>
         </Section>
 
+        {/* Exploit Scenario */}
         <Section icon={Zap} title="Exploit Scenario">
           <div className="space-y-1">
             {meta.exploitScenario.split('\n').map((line, i) => (
@@ -174,6 +179,7 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
           </div>
         </Section>
 
+        {/* Recommended Fix */}
         <Section icon={Wrench} title="Recommended Fix">
           <p className="text-xs text-slate-300 leading-relaxed">{meta.recommendedFix}</p>
         </Section>
@@ -182,10 +188,38 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
   )
 }
 
+// CWE map for dynamic finding categories
+const DYN_CWE: Record<string, string> = {
+  cve:                     'CVE',
+  sql_injection:           'CWE-89',
+  xss:                     'CWE-79',
+  rce:                     'CWE-78',
+  os_command_injection:    'CWE-78',
+  ssrf:                    'CWE-918',
+  ssrf_candidate:          'CWE-918',
+  xxe:                     'CWE-611',
+  path_traversal:          'CWE-22',
+  open_redirect:           'CWE-601',
+  cors_misconfiguration:   'CWE-942',
+  tls_issue:               'CWE-326',
+  missing_security_header: 'CWE-693',
+  information_disclosure:  'CWE-200',
+  default_credentials:     'CWE-1392',
+  weak_credentials:        'CWE-521',
+  unsafe_deserialization:  'CWE-502',
+  csrf:                    'CWE-352',
+  exposed_panel:           'CWE-284',
+  misconfiguration:        'CWE-16',
+  subdomain_takeover:      'CWE-284',
+  vulnerability:           'CWE-20',
+}
+
 // ── Dynamic finding row ───────────────────────────────────────────────────────
 
 function DynamicFindingRow({ f }: { f: DynamicFinding }) {
   const [open, setOpen] = useState(false)
+  const cwe = f.cve ? f.cve : (DYN_CWE[f.category] ?? 'CWE-20')
+
   return (
     <div className={cn('border rounded overflow-hidden transition-colors', open ? 'border-slate-600 bg-slate-900' : 'border-slate-800 bg-slate-900/50')}>
       <button
@@ -202,10 +236,13 @@ function DynamicFindingRow({ f }: { f: DynamicFinding }) {
             <span className="text-xs text-slate-500 font-mono border border-slate-700 rounded px-1.5 py-0.5">{f.tool}</span>
           </div>
           <div className="flex items-center gap-3 mt-1 flex-wrap">
-            <span className="text-xs text-slate-500 font-mono">{f.category}</span>
-            {f.cve && <span className="text-xs text-red-400 font-mono">{f.cve}</span>}
+            <span className="text-xs text-slate-500 font-mono">{cwe}</span>
             {f.url && <span className="text-xs text-slate-600 truncate max-w-xs font-mono">{f.url}</span>}
             {f.port && <span className="text-xs text-slate-500">:{f.port}</span>}
+          </div>
+          {/* Target line */}
+          <div className="mt-0.5 font-mono text-xs text-teal-500/80">
+            {f.target}{f.port ? `:${f.port}` : ''}
           </div>
         </div>
         {open ? <ChevronUp className="h-4 w-4 text-slate-600 flex-shrink-0 mt-0.5" />
@@ -219,22 +256,23 @@ function DynamicFindingRow({ f }: { f: DynamicFinding }) {
               <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{f.description}</p>
             </Section>
           )}
-          <Section icon={GitBranch} title="Technical Detail">
-            <div className="space-y-1.5 text-xs">
-              <div><span className="text-slate-500">Target: </span><span className="font-mono text-slate-300">{f.target}</span></div>
+          <Section icon={GitBranch} title="Data Flow">
+            <div className="space-y-1.5 text-xs font-mono">
+              <div><span className="text-slate-500">Target: </span><span className="text-slate-300">{f.target}</span></div>
               {f.url && (
                 <div className="flex items-center gap-1.5">
                   <span className="text-slate-500">URL: </span>
                   <a href={f.url} target="_blank" rel="noopener noreferrer"
-                    className="text-teal-400 hover:underline flex items-center gap-1 font-mono">
+                    className="text-teal-400 hover:underline flex items-center gap-1">
                     {f.url} <ExternalLink className="h-3 w-3" />
                   </a>
                 </div>
               )}
-              {f.port && <div><span className="text-slate-500">Port: </span><span className="font-mono text-slate-300">{f.port}</span></div>}
-              {f.cve && <div><span className="text-slate-500">CVE: </span><span className="font-mono text-red-400">{f.cve}</span></div>}
-              <div><span className="text-slate-500">Tool: </span><span className="font-mono text-slate-300">{f.tool}</span></div>
-              <div><span className="text-slate-500">Category: </span><span className="font-mono text-slate-300">{f.category}</span></div>
+              {f.port && <div><span className="text-slate-500">Port: </span><span className="text-slate-300">{f.port}</span></div>}
+              {f.cve && <div><span className="text-slate-500">CVE: </span><span className="text-red-400">{f.cve}</span></div>}
+              <div><span className="text-slate-500">CWE: </span><span className="text-slate-300">{cwe}</span></div>
+              <div><span className="text-slate-500">Tool: </span><span className="text-slate-300">{f.tool}</span></div>
+              <div><span className="text-slate-500">Category: </span><span className="text-slate-300">{f.category}</span></div>
             </div>
           </Section>
           {f.evidence && (
@@ -369,6 +407,7 @@ function StaticFindingsView() {
       severity: severity || undefined,
       language: language || undefined,
       category: category || undefined,
+      snippets: true,
     }),
     refetchInterval: 5_000,
   })
@@ -441,6 +480,7 @@ function StaticFindingsView() {
                   <th className="px-4 py-2 font-medium w-16">CWE</th>
                   <th className="px-4 py-2 font-medium">File:Line</th>
                   <th className="px-4 py-2 font-medium w-20">Language</th>
+                  <th className="px-4 py-2 font-medium w-20 text-right">Conf.</th>
                   <th className="w-6" />
                 </tr>
               </thead>
@@ -471,6 +511,9 @@ function StaticFindingsView() {
                         <span className="px-1.5 py-0.5 rounded text-xs bg-slate-800 text-slate-300 border border-slate-700">
                           {f.language || '—'}
                         </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <span className="text-xs text-slate-500 font-mono">{f.confidence ?? 75}%</span>
                       </td>
                       <td className="pr-3">
                         <ChevronRight className={cn('h-3.5 w-3.5 text-slate-600 transition-transform', selected?.id === f.id && 'rotate-90')} />

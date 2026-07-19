@@ -445,12 +445,50 @@ def get_scan(scan_id: str):
 
 # ── Findings ───────────────────────────────────────────────────────────────────
 
+_CATEGORY_CONFIDENCE: dict[str, int] = {
+    "os_command":               95,
+    "sql_query":                90,
+    "rce":                      95,
+    "xss":                      85,
+    "ssrf":                     85,
+    "xxe":                      85,
+    "unsafe_deser":             80,
+    "path_traversal":           85,
+    "file_access":              75,
+    "open_redirect":            80,
+    "ssrf_candidate":           70,
+    "path_traversal_candidate": 65,
+    "open_redirect_candidate":  65,
+    "reflection":               70,
+    "csrf":                     75,
+    "cors_misconfiguration":    80,
+    "http_handler":             99,
+}
+
+
+def _code_snippet(file: str, line: int, context: int = 4) -> str | None:
+    """Return up to `2*context+1` lines centered on `line` (1-based), or None."""
+    try:
+        path = Path(file)
+        if not path.is_file():
+            return None
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        start = max(0, line - 1 - context)
+        end   = min(len(lines), line - 1 + context + 1)
+        numbered = [f"{i + 1:4d}  {'→' if i + 1 == line else ' '} {lines[i]}"
+                    for i in range(start, end)]
+        return "\n".join(numbered)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 @app.get("/findings")
 def list_findings(
     scan_id: Annotated[str | None, Query()] = None,
     severity: Annotated[str | None, Query()] = None,
     language: Annotated[str | None, Query()] = None,
     category: Annotated[str | None, Query()] = None,
+    snippets: Annotated[bool, Query()] = False,
 ):
     query = "SELECT * FROM findings WHERE 1=1"
     params: list[Any] = []
@@ -471,7 +509,14 @@ def list_findings(
     query += " WHEN 'low' THEN 3 ELSE 4 END, file, line"
     with _db() as conn:
         rows = conn.execute(query, params).fetchall()
-    return [dict(r) for r in rows]
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["confidence"] = _CATEGORY_CONFIDENCE.get(d.get("category", ""), 75)
+        if snippets:
+            d["code_snippet"] = _code_snippet(d["file"], d["line"])
+        out.append(d)
+    return out
 
 
 # ── Languages ──────────────────────────────────────────────────────────────────

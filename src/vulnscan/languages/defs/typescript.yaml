@@ -1,0 +1,122 @@
+name: typescript
+extensions: [".ts", ".tsx"]
+grammar: tree_sitter_typescript
+grammar_function: language_typescript
+
+# Sources — attacker-reachable entry points
+
+sources:
+  # Deno HTTP server: serve(async (req) => {...})
+  - id: deno_serve
+    category: http_handler
+    match:
+      node: call_expression
+      callee_leaf_in: [serve]
+
+  # Supabase / Deno edge function: Deno.serve(async (req) => {...})
+  - id: deno_serve_namespaced
+    category: http_handler
+    match:
+      node: call_expression
+      callee_dotted_endswith: [Deno.serve]
+
+  # Express / Next.js route handlers: app.get/post/put/delete/use(path, handler)
+  - id: express_route_get
+    category: http_handler
+    match:
+      node: call_expression
+      callee_dotted_endswith: [app.get, app.post, app.put, app.delete, app.patch, app.use, router.get, router.post, router.put, router.delete, router.patch, router.use]
+
+  # Next.js API routes: export default function handler(req, res)
+  - id: nextjs_handler
+    category: http_handler
+    match:
+      node: call_expression
+      callee_leaf_in: [createServer]
+
+# Sinks — dangerous operations
+
+sinks:
+  # Network fetch with potentially attacker-controlled URL (SSRF)
+  - id: ssrf_fetch
+    category: ssrf_candidate
+    match:
+      node: call_expression
+      callee_leaf_in: [fetch]
+
+  # Code execution: eval(), Function()
+  - id: eval_exec
+    category: os_command
+    match:
+      node: call_expression
+      callee_leaf_in: [eval]
+
+  # OS command execution: exec, execSync, spawn, spawnSync
+  - id: os_exec
+    category: os_command
+    match:
+      node: call_expression
+      callee_leaf_in: [exec, execSync, spawn, spawnSync, execFile, execFileSync]
+
+  # Deno.run (Deno subprocess)
+  - id: deno_run
+    category: os_command
+    match:
+      node: call_expression
+      callee_dotted_endswith: [Deno.run, Deno.Command]
+
+  # File system reads: readFile, readFileSync, createReadStream
+  - id: file_read
+    category: file_access
+    match:
+      node: call_expression
+      callee_leaf_in: [readFile, readFileSync, createReadStream, readdir, readdirSync, stat, statSync, lstat, lstatSync]
+
+  # File system writes: writeFile, writeFileSync, appendFile
+  - id: file_write
+    category: file_access
+    match:
+      node: call_expression
+      callee_leaf_in: [writeFile, writeFileSync, appendFile, appendFileSync, createWriteStream, unlink, unlinkSync, rmdir, rmdirSync]
+
+  # Path manipulation (traversal candidate): path.join, path.resolve
+  - id: path_join
+    category: path_traversal_candidate
+    match:
+      node: call_expression
+      callee_dotted_endswith: [path.join, path.resolve, path.normalize]
+
+  # Redirect (open redirect): res.redirect(), Response.redirect()
+  - id: redirect
+    category: open_redirect_candidate
+    match:
+      node: call_expression
+      callee_dotted_endswith: [res.redirect, response.redirect]
+
+  # SQL query execution (raw string queries)
+  - id: sql_query
+    category: sql_query
+    match:
+      node: call_expression
+      callee_leaf_in: [query, execute, run]
+
+  # Unsafe deserialization
+  - id: json_parse
+    category: unsafe_deser
+    match:
+      node: call_expression
+      callee_dotted_endswith: [JSON.parse]
+
+  # Dynamic require / import (code injection)
+  - id: dynamic_require
+    category: os_command
+    match:
+      node: call_expression
+      callee_leaf_in: [require]
+
+  # New XMLHttpRequest (SSRF from client-server code)
+  - id: xhr_new
+    category: ssrf_candidate
+    match:
+      node: new_expression
+      type_in: [XMLHttpRequest]

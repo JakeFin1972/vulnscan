@@ -7,7 +7,7 @@ import {
 import {
   Globe, Server, Network, Upload, RefreshCw, ChevronDown,
   ChevronUp, CheckCircle2, AlertTriangle, XCircle,
-  Shield, Activity, Target, Zap, Info,
+  Shield, Activity, Target, Zap,
 } from 'lucide-react'
 import {
   easmDashboard, easmListAssets, easmGetAsset, easmListVulns,

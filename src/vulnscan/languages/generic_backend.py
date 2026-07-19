@@ -76,7 +76,8 @@ def _invocation_callee(node) -> str:
 
 
 def _creation_type(node) -> str:
-    ty = node.child_by_field_name("type")
+    # C# uses field "type"; TypeScript/JS new_expression uses field "constructor"
+    ty = node.child_by_field_name("type") or node.child_by_field_name("constructor")
     return _leaf(_decode(ty)) if ty else ""
 
 
@@ -112,8 +113,8 @@ def _matches(node, match: dict, ctx: dict) -> bool:
             if not any(name.startswith(p) for p in match["name_startswith"]):
                 return False
 
-    # ── invocation_expression predicates ─────────────────────────────────────
-    elif node_type == "invocation_expression":
+    # ── invocation_expression (C#) / call_expression (TypeScript/JS) ─────────
+    elif node_type in ("invocation_expression", "call_expression"):
         callee = _invocation_callee(node)
         if "callee_leaf_in" in match:
             if _leaf(callee) not in set(match["callee_leaf_in"]):
@@ -123,8 +124,8 @@ def _matches(node, match: dict, ctx: dict) -> bool:
             if not any(callee == s or callee.endswith("." + s) for s in suffixes):
                 return False
 
-    # ── object_creation_expression predicates ────────────────────────────────
-    elif node_type == "object_creation_expression":
+    # ── object_creation_expression (C#) / new_expression (TypeScript/JS) ─────
+    elif node_type in ("object_creation_expression", "new_expression"):
         if "type_in" in match:
             if _creation_type(node) not in set(match["type_in"]):
                 return False
@@ -141,10 +142,10 @@ def _node_name(node) -> str:
     t = node.type
     if t == "method_declaration":
         return _method_name(node)
-    if t == "invocation_expression":
+    if t in ("invocation_expression", "call_expression"):
         return _invocation_callee(node)
-    if t == "object_creation_expression":
-        n = node.child_by_field_name("type")
+    if t in ("object_creation_expression", "new_expression"):
+        n = node.child_by_field_name("type") or node.child_by_field_name("constructor")
         return "new " + _decode(n) if n else "new <anon>"
     n = node.child_by_field_name("name")
     return _decode(n) if n else node.type
@@ -190,6 +191,7 @@ class YamlBackend:
         self.name: str = defn["name"]
         self.extensions: tuple[str, ...] = tuple(defn["extensions"])
         self._grammar_module: str = defn["grammar"]
+        self._grammar_function: str = defn.get("grammar_function", "language")
         self._rules: list[tuple[str, dict, str, str]] = []
         for rule in defn.get("sources", []):
             self._rules.append(("source", rule["match"], rule["category"], self.name))
@@ -201,7 +203,8 @@ class YamlBackend:
         if self._parser is None:
             from tree_sitter import Language, Parser  # noqa: PLC0415
             mod = importlib.import_module(self._grammar_module)
-            self._parser = Parser(Language(mod.language()))
+            grammar_fn = getattr(mod, self._grammar_function)
+            self._parser = Parser(Language(grammar_fn()))
         return self._parser
 
     def scan_file(self, path: Path) -> list[Hit]:

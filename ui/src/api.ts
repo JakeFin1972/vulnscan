@@ -67,12 +67,14 @@ export const listFindings = (params: {
   severity?: string
   language?: string
   category?: string
+  snippets?: boolean
 }) => {
   const q = new URLSearchParams()
   if (params.scan_id) q.set('scan_id', params.scan_id)
   if (params.severity) q.set('severity', params.severity)
   if (params.language) q.set('language', params.language)
   if (params.category) q.set('category', params.category)
+  if (params.snippets) q.set('snippets', 'true')
   return request<Finding[]>('GET', `/findings?${q.toString()}`)
 }
 
