@@ -7,6 +7,7 @@ import Languages from './pages/Languages'
 import Settings from './pages/Settings'
 import DynamicScan from './pages/DynamicScan'
 import EASM from './pages/EASM'
+import Workflow from './pages/Workflow'
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Route path="/dynamic" element={<DynamicScan />} />
         <Route path="/easm" element={<EASM />} />
         <Route path="/languages" element={<Languages />} />
+        <Route path="/workflow" element={<Workflow />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
