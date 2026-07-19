@@ -791,6 +791,103 @@ def list_scanners():
 
 # ── Health (update to include dynamic scans) ──────────────────────────────────
 
+# ── Claude AI analysis ────────────────────────────────────────────────────────
+
+from .ai import analyzer as _ai  # noqa: E402
+
+
+class AiAnalyzeRequest(BaseModel):
+    finding_id: str | None = None          # static finding id
+    dynamic_finding_id: str | None = None  # dynamic finding id
+
+
+class AiBoostRequest(BaseModel):
+    scan_id: str
+    max_pairs: int = 20
+
+
+@app.get("/ai/status")
+def ai_status():
+    return {
+        "available": _ai.is_available(),
+        "model": _ai._MODEL,
+        "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+    }
+
+
+@app.post("/ai/analyze")
+def ai_analyze(req: AiAnalyzeRequest):
+    """Analyze a static or dynamic finding with Claude AI."""
+    if not _ai.is_available():
+        raise HTTPException(status_code=503, detail="AI not available: set ANTHROPIC_API_KEY")
+
+    if req.finding_id:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT f.*, s.path as scan_root FROM findings f "
+                "JOIN scans s ON f.scan_id = s.id WHERE f.id = ?",
+                (req.finding_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Finding not found")
+        finding = dict(row)
+        snippet = _code_snippet(finding["file"], finding["line"])
+        try:
+            result = _ai.analyze_static_finding(
+                finding, code_snippet=snippet, scan_root=finding.get("scan_root")
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"type": "static", "finding_id": req.finding_id, "analysis": result}
+
+    elif req.dynamic_finding_id:
+        with _db() as conn:
+            row = conn.execute(
+                "SELECT * FROM dynamic_findings WHERE id = ?",
+                (req.dynamic_finding_id,),
+            ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Dynamic finding not found")
+        finding = dict(row)
+        try:
+            result = _ai.analyze_dynamic_finding(finding)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return {"type": "dynamic", "finding_id": req.dynamic_finding_id, "analysis": result}
+
+    raise HTTPException(status_code=400, detail="Provide finding_id or dynamic_finding_id")
+
+
+@app.post("/ai/boost")
+def ai_boost(req: AiBoostRequest):
+    """Run AI taint analysis on all source-sink pairs in a static scan."""
+    if not _ai.is_available():
+        raise HTTPException(status_code=503, detail="AI not available: set ANTHROPIC_API_KEY")
+
+    with _db() as conn:
+        row = conn.execute("SELECT * FROM scans WHERE id = ?", (req.scan_id,)).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    scan = dict(row)
+    report_raw = scan.get("report_json") or "{}"
+    report = json.loads(report_raw) if isinstance(report_raw, str) else (report_raw or {})
+
+    try:
+        results = _ai.boost_scan(report, max_pairs=req.max_pairs)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Count confirmed findings
+    confirmed = [r for r in results if r.get("ai", {}).get("verdict") == "confirmed"]
+    return {
+        "scan_id": req.scan_id,
+        "pairs_analyzed": len(results),
+        "confirmed": len(confirmed),
+        "results": results,
+    }
+
+
 @app.get("/health")
 def health():
     with _db() as conn:
@@ -803,6 +900,10 @@ def health():
         "dynamic_scan_count": dyn_count,
         "language_count": lang_count,
         "scanners": tool_status(),
+        "ai": {
+            "available": _ai.is_available(),
+            "model": _ai._MODEL,
+        },
     }
 
 

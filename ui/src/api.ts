@@ -107,6 +107,62 @@ export const validateYaml = async (
 export const runTest = (repo: string, target: string, framework?: string) =>
   request<RunTestResult>('POST', '/runtest', { repo, target, framework })
 
+// ── Claude AI ─────────────────────────────────────────────────────────────────
+
+export interface AiAnalysis {
+  verdict: 'confirmed' | 'false_positive' | 'needs_review'
+  severity: string
+  confidence: number
+  exploit_difficulty: 'trivial' | 'low' | 'moderate' | 'high' | 'not_exploitable'
+  exploit_scenario: string
+  data_flow?: string
+  attack_vector?: string
+  affected_system?: string
+  remediation_summary: string
+  remediation_code: string
+  cvss_vector: string
+  reasoning: string
+  vulnerability_title?: string
+  cwe?: string
+}
+
+export interface AiAnalyzeResponse {
+  type: 'static' | 'dynamic'
+  finding_id: string
+  analysis: AiAnalysis
+}
+
+export interface AiBoostResult {
+  source: Record<string, unknown>
+  sink: Record<string, unknown>
+  proximity: string
+  ai: AiAnalysis & { error?: string; vulnerability_title?: string; cwe?: string }
+}
+
+export interface AiBoostResponse {
+  scan_id: string
+  pairs_analyzed: number
+  confirmed: number
+  results: AiBoostResult[]
+}
+
+export interface AiStatus {
+  available: boolean
+  model: string
+  api_key_set: boolean
+}
+
+export const aiStatus = () => request<AiStatus>('GET', '/ai/status')
+
+export const aiAnalyzeFinding = (findingId: string) =>
+  request<AiAnalyzeResponse>('POST', '/ai/analyze', { finding_id: findingId })
+
+export const aiAnalyzeDynamicFinding = (findingId: string) =>
+  request<AiAnalyzeResponse>('POST', '/ai/analyze', { dynamic_finding_id: findingId })
+
+export const aiBoostScan = (scanId: string, maxPairs = 20) =>
+  request<AiBoostResponse>('POST', '/ai/boost', { scan_id: scanId, max_pairs: maxPairs })
+
 // Scanners
 export const listScanners = () =>
   request<Record<string, ScannerStatus>>('GET', '/scanners')

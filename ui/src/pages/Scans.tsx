@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { RotateCcw, Loader2, Plus, ExternalLink } from 'lucide-react'
-import { listScans, startScan } from '@/api'
+import { RotateCcw, Loader2, Plus, ExternalLink, Sparkles, ChevronDown, ChevronUp } from 'lucide-react'
+import { listScans, startScan, aiBoostScan } from '@/api'
+import type { AiBoostResponse } from '@/api'
 import StatusBadge from '@/components/StatusBadge'
 import type { Scan } from '@/types'
 
@@ -12,6 +13,167 @@ function fmt(iso: string) {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit', hour12: false,
   })
+}
+
+const VERDICT_DOT: Record<string, string> = {
+  confirmed: 'bg-red-500', false_positive: 'bg-green-500', needs_review: 'bg-yellow-400',
+}
+
+function ScanRow({
+  s, highlight, confirming, rescanning, onRescanClick,
+}: {
+  s: Scan
+  highlight: boolean
+  confirming: boolean
+  rescanning: boolean
+  onRescanClick: (s: Scan) => void
+}) {
+  const [boostOpen, setBoostOpen] = useState(false)
+  const [boostResult, setBoostResult] = useState<AiBoostResponse | null>(null)
+
+  const boostMut = useMutation({
+    mutationFn: () => aiBoostScan(s.id),
+    onSuccess: (r: AiBoostResponse) => { setBoostResult(r); setBoostOpen(true) },
+  })
+
+  return (
+    <>
+      <tr
+        className={`transition-colors ${highlight ? 'bg-teal-500/10' : 'hover:bg-slate-800/30'}`}
+      >
+        <td className="px-4 py-2.5">
+          <StatusBadge status={s.status} />
+          {s.error && (
+            <div className="mt-0.5 text-red-400 font-mono text-xs max-w-xs truncate" title={s.error}>
+              {s.error}
+            </div>
+          )}
+        </td>
+        <td className="px-4 py-2.5 font-mono text-slate-300 max-w-xs">
+          <div className="truncate" title={s.path}>{s.path}</div>
+        </td>
+        <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmt(s.created_at)}</td>
+        <td className="px-4 py-2.5 text-right text-slate-400">{s.source_count}</td>
+        <td className="px-4 py-2.5 text-right text-slate-400">{s.sink_count}</td>
+        <td className="px-4 py-2.5 text-right text-slate-400">{s.pair_count}</td>
+        <td className="px-4 py-2.5">
+          <div className="flex items-center justify-end gap-2">
+            {s.status === 'done' && (
+              <Link
+                to={`/findings?scan_id=${s.id}`}
+                className="flex items-center gap-1 text-teal-500 hover:text-teal-400 transition-colors"
+              >
+                <ExternalLink className="h-3 w-3" />
+              </Link>
+            )}
+            {s.status === 'done' && s.pair_count > 0 && (
+              <button
+                onClick={() => boostMut.isPending ? null : (boostResult ? setBoostOpen(v => !v) : boostMut.mutate())}
+                disabled={boostMut.isPending}
+                title="AI taint analysis on source-sink pairs"
+                className="flex items-center gap-1 px-2 py-1 rounded border border-purple-700/60 text-purple-400 hover:bg-purple-900/20 hover:border-purple-500 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {boostMut.isPending
+                  ? <Loader2 className="h-3 w-3 animate-spin" />
+                  : <Sparkles className="h-3 w-3" />}
+                {boostMut.isPending ? 'Analyzing…' : 'AI Boost'}
+                {boostResult && (boostOpen
+                  ? <ChevronUp className="h-3 w-3" />
+                  : <ChevronDown className="h-3 w-3" />)}
+              </button>
+            )}
+            <button
+              onClick={() => onRescanClick(s)}
+              disabled={rescanning || s.status === 'pending' || s.status === 'running'}
+              title={confirming ? 'Click again to confirm rescan' : 'Re-run scan'}
+              className={`flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                confirming
+                  ? 'border-orange-600 text-orange-400 bg-orange-900/20 hover:text-orange-300'
+                  : 'border-slate-700 text-slate-400 hover:border-teal-600 hover:text-teal-400 hover:bg-teal-900/20'
+              }`}
+            >
+              <RotateCcw className={`h-3 w-3 ${rescanning ? 'animate-spin' : ''}`} />
+              {rescanning ? 'Scanning…' : confirming ? 'Confirm?' : 'Rescan'}
+            </button>
+          </div>
+        </td>
+      </tr>
+
+      {/* AI Boost error */}
+      {boostMut.isError && (
+        <tr>
+          <td colSpan={7} className="px-4 py-2 bg-red-900/10 border-t border-red-900/30">
+            <p className="text-xs text-red-400">
+              AI Boost failed: {boostMut.error instanceof Error ? boostMut.error.message : 'Unknown error'}
+              {String(boostMut.error).includes('ANTHROPIC_API_KEY') && (
+                <span className="ml-2 text-slate-400">Set ANTHROPIC_API_KEY env var and restart the server.</span>
+              )}
+            </p>
+          </td>
+        </tr>
+      )}
+
+      {/* AI Boost results */}
+      {boostResult && boostOpen && (
+        <tr>
+          <td colSpan={7} className="px-4 py-3 bg-purple-900/10 border-t border-purple-800/30">
+            <div className="space-y-2">
+              <div className="flex items-center gap-3 mb-2">
+                <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+                <span className="text-xs font-semibold text-purple-300">
+                  AI Boost — {boostResult.confirmed}/{boostResult.pairs_analyzed} confirmed vulnerabilities
+                </span>
+                <span className="text-xs text-slate-500">claude-sonnet-4-6</span>
+              </div>
+              {boostResult.results.map((r, i) => {
+                const ai = r.ai
+                const verdict = ai.verdict ?? 'needs_review'
+                const dot = VERDICT_DOT[verdict] ?? 'bg-slate-500'
+                return (
+                  <div key={i} className={`rounded border p-3 text-xs space-y-1.5 ${
+                    verdict === 'confirmed' ? 'border-red-800/50 bg-red-900/10'
+                    : verdict === 'false_positive' ? 'border-green-800/50 bg-green-900/10'
+                    : 'border-slate-700 bg-slate-800/30'
+                  }`}>
+                    <div className="flex items-start gap-2 flex-wrap">
+                      <span className={`mt-1 h-2 w-2 rounded-full flex-shrink-0 ${dot}`} />
+                      <span className="font-semibold text-slate-200">
+                        {ai.vulnerability_title ?? `${(r.source as {name?:string}).name} → ${(r.sink as {name?:string}).name}`}
+                      </span>
+                      {ai.cwe && <span className="font-mono text-slate-500 border border-slate-700 rounded px-1">{ai.cwe}</span>}
+                      {ai.severity && <span className="font-semibold text-slate-400 uppercase">{ai.severity}</span>}
+                      <span className={`capitalize ${
+                        ai.exploit_difficulty === 'trivial' || ai.exploit_difficulty === 'low' ? 'text-red-400'
+                        : ai.exploit_difficulty === 'moderate' ? 'text-yellow-400'
+                        : 'text-slate-400'
+                      }`}>
+                        {ai.exploit_difficulty?.replace('_', ' ')}
+                      </span>
+                    </div>
+                    {ai.data_flow && (
+                      <div className="font-mono text-slate-500 text-xs">{ai.data_flow}</div>
+                    )}
+                    {ai.reasoning && (
+                      <p className="text-slate-400 leading-relaxed">{ai.reasoning}</p>
+                    )}
+                    {verdict === 'confirmed' && ai.remediation_summary && (
+                      <div className="mt-1 pt-1 border-t border-slate-700/50">
+                        <span className="text-slate-500">Fix: </span>
+                        <span className="text-green-400">{ai.remediation_summary}</span>
+                      </div>
+                    )}
+                    {verdict === 'confirmed' && ai.remediation_code && (
+                      <pre className="mt-1 text-xs text-green-300 bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap">{ai.remediation_code}</pre>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  )
 }
 
 export default function Scans() {
@@ -129,54 +291,14 @@ export default function Scans() {
                 const confirming = confirmRescanId === s.id
                 const rescanning = rescanMut.isPending && confirmRescanId === s.id
                 return (
-                  <tr
+                  <ScanRow
                     key={s.id}
-                    className={`transition-colors ${
-                      highlight === s.id ? 'bg-teal-500/10' : 'hover:bg-slate-800/30'
-                    }`}
-                    onMouseLeave={() => { if (confirming && !rescanning) setConfirmRescanId(null) }}
-                  >
-                    <td className="px-4 py-2.5">
-                      <StatusBadge status={s.status} />
-                      {s.error && (
-                        <div className="mt-0.5 text-red-400 font-mono text-xs max-w-xs truncate" title={s.error}>
-                          {s.error}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-slate-300 max-w-xs">
-                      <div className="truncate" title={s.path}>{s.path}</div>
-                    </td>
-                    <td className="px-4 py-2.5 text-slate-500 whitespace-nowrap">{fmt(s.created_at)}</td>
-                    <td className="px-4 py-2.5 text-right text-slate-400">{s.source_count}</td>
-                    <td className="px-4 py-2.5 text-right text-slate-400">{s.sink_count}</td>
-                    <td className="px-4 py-2.5 text-right text-slate-400">{s.pair_count}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex items-center justify-end gap-2">
-                        {s.status === 'done' && (
-                          <Link
-                            to={`/findings?scan_id=${s.id}`}
-                            className="flex items-center gap-1 text-teal-500 hover:text-teal-400 transition-colors"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                          </Link>
-                        )}
-                        <button
-                          onClick={() => handleRescanClick(s)}
-                          disabled={rescanning || s.status === 'pending' || s.status === 'running'}
-                          title={confirming ? 'Click again to confirm rescan' : 'Re-run scan'}
-                          className={`flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
-                            confirming
-                              ? 'border-orange-600 text-orange-400 bg-orange-900/20 hover:text-orange-300'
-                              : 'border-slate-700 text-slate-400 hover:border-teal-600 hover:text-teal-400 hover:bg-teal-900/20'
-                          }`}
-                        >
-                          <RotateCcw className={`h-3 w-3 ${rescanning ? 'animate-spin' : ''}`} />
-                          {rescanning ? 'Scanning…' : confirming ? 'Confirm?' : 'Rescan'}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                    s={s}
+                    highlight={highlight === s.id}
+                    confirming={confirming}
+                    rescanning={rescanning}
+                    onRescanClick={handleRescanClick}
+                  />
                 )
               })}
             </tbody>

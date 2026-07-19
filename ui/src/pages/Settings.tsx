@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Save, Plus, Trash2, CheckCircle, XCircle, Loader2, RefreshCw } from 'lucide-react'
-import { health } from '@/api'
+import { Save, Plus, Trash2, CheckCircle, XCircle, Loader2, RefreshCw, Sparkles, Eye, EyeOff } from 'lucide-react'
+import { health, aiStatus } from '@/api'
 
 const API_URL_KEY = 'vulnscan_api_url'
 const PATHS_KEY = 'vulnscan_authorized_paths'
 const ZAP_CONFIG_KEY = 'vulnscan_zap_config'
 const OPENVAS_CONFIG_KEY = 'vulnscan_openvas_config'
 const NMAP_CONFIG_KEY = 'vulnscan_nmap_config'
+const AI_KEY_KEY = 'vulnscan_anthropic_key'
 
 function loadPaths(): string[] {
   try { return JSON.parse(localStorage.getItem(PATHS_KEY) ?? '[]') as string[] }
@@ -83,12 +84,22 @@ export default function Settings() {
   const [openVasSaved, setOpenVasSaved] = useState(false)
   const [nmapConfig, setNmapConfig] = useState<NmapConfig>(loadNmapConfig)
   const [nmapSaved, setNmapSaved] = useState(false)
+  const [anthropicKey, setAnthropicKey] = useState(localStorage.getItem(AI_KEY_KEY) ?? '')
+  const [aiKeySaved, setAiKeySaved] = useState(false)
+  const [showKey, setShowKey] = useState(false)
 
   const healthQ = useQuery({
     queryKey: ['health', apiUrl],
     queryFn: health,
     retry: false,
     staleTime: 5000,
+  })
+
+  const aiStatusQ = useQuery({
+    queryKey: ['ai-status'],
+    queryFn: aiStatus,
+    retry: false,
+    staleTime: 10_000,
   })
 
   const scanners = healthQ.data?.scanners ?? {}
@@ -131,6 +142,15 @@ export default function Settings() {
     localStorage.setItem(NMAP_CONFIG_KEY, JSON.stringify(nmapConfig))
     setNmapSaved(true)
     setTimeout(() => setNmapSaved(false), 2000)
+  }
+
+  function saveAiKey() {
+    localStorage.setItem(AI_KEY_KEY, anthropicKey)
+    // Propagate key to API server via a PUT /ai/config endpoint
+    // The key is stored in localStorage and the user must restart the API with it set
+    setAiKeySaved(true)
+    setTimeout(() => setAiKeySaved(false), 3000)
+    aiStatusQ.refetch()
   }
 
   const nmapAvailable = scanners['nmap']?.available
@@ -204,6 +224,73 @@ export default function Settings() {
             </div>
           </div>
         )}
+      </section>
+
+      {/* Claude AI */}
+      <section className="bg-slate-900 border border-purple-800/40 rounded-lg p-4 space-y-3">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+          <h2 className="text-xs font-medium text-purple-300 uppercase tracking-wider">Claude AI Integration</h2>
+          {aiStatusQ.data?.available && (
+            <span className="ml-auto text-xs text-green-400 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-green-400 inline-block" /> Active · {aiStatusQ.data.model}
+            </span>
+          )}
+          {aiStatusQ.data && !aiStatusQ.data.available && (
+            <span className="ml-auto text-xs text-slate-500">API key required</span>
+          )}
+        </div>
+        <p className="text-xs text-slate-400 leading-relaxed">
+          Claude AI provides deep vulnerability analysis, exploit scenario generation, taint flow verification,
+          and AI-powered remediation code. Set your Anthropic API key below, then restart the API server
+          with <code className="font-mono text-purple-300/80">ANTHROPIC_API_KEY=&lt;key&gt;</code> in the environment.
+        </p>
+        <div className="space-y-2">
+          <label className="text-xs text-slate-500 block">Anthropic API Key</label>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 flex items-center bg-slate-950 border border-slate-700 rounded overflow-hidden focus-within:border-purple-600">
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={anthropicKey}
+                onChange={e => setAnthropicKey(e.target.value)}
+                placeholder="sk-ant-..."
+                className="flex-1 bg-transparent px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none"
+              />
+              <button
+                onClick={() => setShowKey(v => !v)}
+                className="px-2 text-slate-600 hover:text-slate-400 transition-colors"
+              >
+                {showKey ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <button
+              onClick={saveAiKey}
+              disabled={!anthropicKey.trim()}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
+            >
+              <Save className="h-3.5 w-3.5" />
+              {aiKeySaved ? 'Saved!' : 'Save'}
+            </button>
+          </div>
+          {aiKeySaved && (
+            <p className="text-xs text-yellow-400">
+              Key saved to local storage. Restart the API server with{' '}
+              <code className="font-mono">ANTHROPIC_API_KEY=&lt;key&gt; .venv/bin/uvicorn src.vulnscan.api:app</code>
+            </p>
+          )}
+        </div>
+
+        {/* AI features list */}
+        <div className="pt-2 border-t border-slate-800">
+          <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">AI Features</p>
+          <ul className="space-y-1 text-xs text-slate-400">
+            <li className="flex items-center gap-2"><Sparkles className="h-3 w-3 text-purple-500" /> Analyze individual findings — confirmed/false-positive verdict</li>
+            <li className="flex items-center gap-2"><Sparkles className="h-3 w-3 text-purple-500" /> AI Boost scan — taint analysis on all source-sink pairs</li>
+            <li className="flex items-center gap-2"><Sparkles className="h-3 w-3 text-purple-500" /> Exploit difficulty scoring — trivial / low / moderate / high</li>
+            <li className="flex items-center gap-2"><Sparkles className="h-3 w-3 text-purple-500" /> CVSS 3.1 vector estimation per finding</li>
+            <li className="flex items-center gap-2"><Sparkles className="h-3 w-3 text-purple-500" /> Concrete remediation code in the target language</li>
+          </ul>
+        </div>
       </section>
 
       {/* Authorized paths */}

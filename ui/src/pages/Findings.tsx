@@ -1,11 +1,16 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import {
   X, Loader2, ChevronRight, AlertTriangle, Code2, GitBranch,
   Zap, Wrench, ChevronDown, ChevronUp, ExternalLink, Globe, Server,
+  Sparkles, CheckCircle2, XCircle, HelpCircle, ShieldAlert,
 } from 'lucide-react'
-import { listFindings, listScans, listDynamicFindings, listDynamicScans } from '@/api'
+import {
+  listFindings, listScans, listDynamicFindings, listDynamicScans,
+  aiAnalyzeFinding, aiAnalyzeDynamicFinding,
+} from '@/api'
+import type { AiAnalysis, AiAnalyzeResponse } from '@/api'
 import type { Finding, DynamicFinding, DynamicScan, Severity } from '@/types'
 import SeverityBadge from '@/components/SeverityBadge'
 import { getCategoryMeta } from '@/lib/categoryMeta'
@@ -83,6 +88,100 @@ function Section({ icon: Icon, title, children }: {
   )
 }
 
+// ── AI analysis panel ─────────────────────────────────────────────────────────
+
+const VERDICT_STYLE: Record<string, { icon: React.ElementType; cls: string; label: string }> = {
+  confirmed:      { icon: XCircle,      cls: 'text-red-400 bg-red-900/30 border-red-700',      label: 'Confirmed' },
+  false_positive: { icon: CheckCircle2, cls: 'text-green-400 bg-green-900/30 border-green-700', label: 'False Positive' },
+  needs_review:   { icon: HelpCircle,   cls: 'text-yellow-400 bg-yellow-900/30 border-yellow-700', label: 'Needs Review' },
+}
+
+const DIFF_STYLE: Record<string, string> = {
+  trivial:         'text-red-400',
+  low:             'text-orange-400',
+  moderate:        'text-yellow-400',
+  high:            'text-blue-400',
+  not_exploitable: 'text-slate-400',
+}
+
+function AiPanel({ analysis }: { analysis: AiAnalysis }) {
+  const verdict = VERDICT_STYLE[analysis.verdict] ?? VERDICT_STYLE.needs_review
+  const VIcon = verdict.icon
+  return (
+    <div className="rounded-lg border border-purple-700/50 bg-purple-900/10 overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 bg-purple-900/30 border-b border-purple-700/50">
+        <Sparkles className="h-3.5 w-3.5 text-purple-400" />
+        <span className="text-xs font-medium text-purple-300 uppercase tracking-wide">Claude AI Analysis</span>
+        <span className="ml-auto text-xs text-purple-400/70">claude-sonnet-4-6</span>
+      </div>
+      <div className="p-3 space-y-3">
+        {/* Verdict + difficulty row */}
+        <div className="flex flex-wrap gap-2 items-center">
+          <span className={cn('flex items-center gap-1 px-2 py-0.5 rounded border text-xs font-semibold', verdict.cls)}>
+            <VIcon className="h-3 w-3" /> {verdict.label}
+          </span>
+          <span className="text-xs text-slate-400">
+            Exploit: <span className={cn('font-semibold', DIFF_STYLE[analysis.exploit_difficulty] ?? 'text-slate-300')}>
+              {analysis.exploit_difficulty.replace('_', ' ')}
+            </span>
+          </span>
+          <span className="text-xs text-slate-400">
+            Severity: <span className="font-semibold text-slate-200">{analysis.severity}</span>
+          </span>
+          <span className="text-xs text-slate-400">
+            Confidence: <span className="font-semibold text-slate-200">{analysis.confidence}%</span>
+          </span>
+        </div>
+
+        {/* CVSS + CWE */}
+        {(analysis.cvss_vector || analysis.cwe) && (
+          <div className="flex flex-wrap gap-2 text-xs font-mono">
+            {analysis.cvss_vector && (
+              <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">{analysis.cvss_vector}</span>
+            )}
+            {analysis.cwe && (
+              <span className="px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300">{analysis.cwe}</span>
+            )}
+          </div>
+        )}
+
+        {/* Reasoning */}
+        {analysis.reasoning && (
+          <p className="text-xs text-slate-300 leading-relaxed italic border-l-2 border-purple-700/50 pl-2">{analysis.reasoning}</p>
+        )}
+
+        {/* Data flow */}
+        {(analysis.data_flow || analysis.attack_vector) && (
+          <div className="text-xs font-mono text-slate-400 bg-slate-950 rounded p-2">
+            {analysis.data_flow || analysis.attack_vector}
+          </div>
+        )}
+
+        {/* Exploit scenario */}
+        {analysis.exploit_scenario && (
+          <Section icon={ShieldAlert} title="Exploit Scenario (AI)">
+            <div className="space-y-1">
+              {analysis.exploit_scenario.split('\n').map((line, i) => (
+                <p key={i} className="text-xs text-slate-300 leading-relaxed">{line}</p>
+              ))}
+            </div>
+          </Section>
+        )}
+
+        {/* Remediation */}
+        {analysis.remediation_summary && (
+          <Section icon={Wrench} title="AI Recommended Fix">
+            <p className="text-xs text-slate-300 leading-relaxed mb-2">{analysis.remediation_summary}</p>
+            {analysis.remediation_code && (
+              <pre className="text-xs font-mono text-green-300 bg-slate-950 rounded p-2 overflow-x-auto whitespace-pre-wrap leading-relaxed">{analysis.remediation_code}</pre>
+            )}
+          </Section>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Static finding detail panel ───────────────────────────────────────────────
 
 const CONFIDENCE_COLOR = (pct: number) =>
@@ -96,6 +195,12 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
   const fileParts = finding.file.split('/')
   const srcIdx = fileParts.indexOf('src')
   const displayFile = srcIdx >= 0 ? fileParts.slice(srcIdx).join('/') : fileParts.slice(-3).join('/')
+
+  const [aiResult, setAiResult] = useState<AiAnalysis | null>(null)
+  const analyzeMut = useMutation({
+    mutationFn: () => aiAnalyzeFinding(finding.id),
+    onSuccess: (r: AiAnalyzeResponse) => setAiResult(r.analysis),
+  })
 
   return (
     <div className="w-[520px] flex-shrink-0 border-l border-slate-800 bg-slate-900 flex flex-col overflow-hidden">
@@ -116,9 +221,22 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
             <span className="text-slate-500">File: </span>{displayFile}:<span className="text-teal-300">{finding.line}</span>
           </div>
         </div>
-        <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors flex-shrink-0 mt-0.5">
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
+          <button
+            onClick={() => analyzeMut.mutate()}
+            disabled={analyzeMut.isPending}
+            title="Analyze with Claude AI"
+            className="flex items-center gap-1 px-2 py-1 rounded border border-purple-700/60 text-purple-400 hover:bg-purple-900/20 hover:border-purple-500 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {analyzeMut.isPending
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <Sparkles className="h-3 w-3" />}
+            {analyzeMut.isPending ? 'Analyzing…' : aiResult ? 'Re-analyze' : 'AI Analyze'}
+          </button>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-300 transition-colors">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="overflow-y-auto flex-1 p-3 space-y-3">
@@ -183,6 +301,16 @@ function StaticFindingDetail({ finding, onClose }: { finding: Finding; onClose: 
         <Section icon={Wrench} title="Recommended Fix">
           <p className="text-xs text-slate-300 leading-relaxed">{meta.recommendedFix}</p>
         </Section>
+
+        {/* AI error */}
+        {analyzeMut.isError && (
+          <div className="text-xs text-red-400 bg-red-900/20 border border-red-700/50 rounded p-2">
+            AI analysis failed: {analyzeMut.error instanceof Error ? analyzeMut.error.message : 'Unknown error'}
+          </div>
+        )}
+
+        {/* AI result */}
+        {aiResult && <AiPanel analysis={aiResult} />}
       </div>
     </div>
   )
@@ -218,7 +346,13 @@ const DYN_CWE: Record<string, string> = {
 
 function DynamicFindingRow({ f }: { f: DynamicFinding }) {
   const [open, setOpen] = useState(false)
+  const [aiResult, setAiResult] = useState<AiAnalysis | null>(null)
   const cwe = f.cve ? f.cve : (DYN_CWE[f.category] ?? 'CWE-20')
+
+  const analyzeMut = useMutation({
+    mutationFn: () => aiAnalyzeDynamicFinding(f.id),
+    onSuccess: (r: AiAnalyzeResponse) => { setAiResult(r.analysis); setOpen(true) },
+  })
 
   return (
     <div className={cn('border rounded overflow-hidden transition-colors', open ? 'border-slate-600 bg-slate-900' : 'border-slate-800 bg-slate-900/50')}>
@@ -245,8 +379,20 @@ function DynamicFindingRow({ f }: { f: DynamicFinding }) {
             {f.target}{f.port ? `:${f.port}` : ''}
           </div>
         </div>
-        {open ? <ChevronUp className="h-4 w-4 text-slate-600 flex-shrink-0 mt-0.5" />
-               : <ChevronDown className="h-4 w-4 text-slate-600 flex-shrink-0 mt-0.5" />}
+        <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
+          <button
+            onClick={e => { e.stopPropagation(); analyzeMut.mutate() }}
+            disabled={analyzeMut.isPending}
+            title="Analyze with Claude AI"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-purple-700/60 text-purple-400 hover:bg-purple-900/20 hover:border-purple-500 text-xs transition-colors disabled:opacity-40"
+          >
+            {analyzeMut.isPending
+              ? <Loader2 className="h-3 w-3 animate-spin" />
+              : <Sparkles className="h-3 w-3" />}
+          </button>
+          {open ? <ChevronUp className="h-4 w-4 text-slate-600" />
+                : <ChevronDown className="h-4 w-4 text-slate-600" />}
+        </div>
       </button>
 
       {open && (
@@ -285,6 +431,12 @@ function DynamicFindingRow({ f }: { f: DynamicFinding }) {
               <p className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap">{f.remediation}</p>
             </Section>
           )}
+          {analyzeMut.isError && (
+            <div className="text-xs text-red-400 bg-red-900/20 border border-red-700/50 rounded p-2">
+              AI analysis failed: {analyzeMut.error instanceof Error ? analyzeMut.error.message : 'Unknown error'}
+            </div>
+          )}
+          {aiResult && <AiPanel analysis={aiResult} />}
         </div>
       )}
     </div>
