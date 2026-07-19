@@ -165,14 +165,14 @@ export default function Scans() {
                           onClick={() => handleRescanClick(s)}
                           disabled={rescanning || s.status === 'pending' || s.status === 'running'}
                           title={confirming ? 'Click again to confirm rescan' : 'Re-run scan'}
-                          className={`flex items-center gap-1 transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
+                          className={`flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
                             confirming
-                              ? 'text-orange-400 hover:text-orange-300'
-                              : 'text-slate-500 hover:text-slate-300'
+                              ? 'border-orange-600 text-orange-400 bg-orange-900/20 hover:text-orange-300'
+                              : 'border-slate-700 text-slate-400 hover:border-teal-600 hover:text-teal-400 hover:bg-teal-900/20'
                           }`}
                         >
                           <RotateCcw className={`h-3 w-3 ${rescanning ? 'animate-spin' : ''}`} />
-                          {confirming && !rescanning && <span className="text-[10px] font-medium">confirm?</span>}
+                          {rescanning ? 'Scanning…' : confirming ? 'Confirm?' : 'Rescan'}
                         </button>
                       </div>
                     </td>

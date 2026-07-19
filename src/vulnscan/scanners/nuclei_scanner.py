@@ -22,15 +22,31 @@ Options (passed via the 'nuclei' key in DynamicScanRequest.options):
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 from .base import DynamicFinding, Severity
 
 _NUCLEI_BIN: str | None = shutil.which("nuclei")
+
+
+def _find_nuclei_templates() -> Path | None:
+    """Return the nuclei-templates root directory, or None if not found."""
+    candidates = [
+        Path.home() / "nuclei-templates",
+        Path(os.environ.get("HOME", "")) / "nuclei-templates",
+        Path("/opt/homebrew/share/nuclei-templates"),
+        Path("/usr/local/share/nuclei-templates"),
+    ]
+    for p in candidates:
+        if p.is_dir():
+            return p
+    return None
 
 _SEVERITY_MAP: dict[str, Severity] = {
     "critical": "critical",
@@ -71,9 +87,14 @@ def scan(
     tag_filter       = opts.get("tags",        [])
     template_ids     = opts.get("templates",   [])
     rate_limit       = int(opts.get("rate_limit",    150))
-    per_req_timeout  = int(opts.get("timeout",       10))
     no_interactsh    = bool(opts.get("no_interactsh", False))
     scan_timeout     = int(opts.get("scan_timeout",  300))
+
+    # Detect non-HTTP targets (host:port, bare IP, hostname without scheme).
+    # Network/TCP templates need a longer per-request timeout and must not have
+    # -timeout set too short — nuclei's default (10s) kills most TCP templates.
+    _is_network_target = not target.startswith("http")
+    per_req_timeout = int(opts.get("timeout", 30 if _is_network_target else 10))
 
     cmd: list[str] = [
         _NUCLEI_BIN,
@@ -83,6 +104,15 @@ def scan(
         "-rl",  str(rate_limit),
         "-timeout", str(per_req_timeout),
     ]
+
+    # For non-HTTP targets (host:port / bare hostname), nuclei silently skips
+    # TCP/network protocol templates when tag or severity filters are active.
+    # Fix: point nuclei directly at the network templates directory so it always
+    # evaluates TCP CVEs (Redis, SMB, RDP, etc.) regardless of filter flags.
+    _NUCLEI_TEMPLATES = _find_nuclei_templates()
+    if _is_network_target and _NUCLEI_TEMPLATES and not template_ids:
+        # network/ covers CVEs and misconfigs for non-HTTP services
+        cmd += ["-t", str(_NUCLEI_TEMPLATES / "network")]
 
     if severity_filter:
         cmd += ["-severity", ",".join(severity_filter)]

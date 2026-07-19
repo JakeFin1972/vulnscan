@@ -315,9 +315,10 @@ function ScanRow({
         onClick={e => { e.stopPropagation(); onRescan() }}
         disabled={rescanning || scan.status === 'pending' || scan.status === 'running'}
         title="Re-run this scan"
-        className="mt-0.5 flex-shrink-0 text-slate-600 hover:text-teal-400 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+        className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded border border-slate-700 text-slate-400 hover:border-teal-600 hover:text-teal-400 hover:bg-teal-900/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs"
       >
-        <RefreshCw className={cn('h-3.5 w-3.5', rescanning && 'animate-spin')} />
+        <RefreshCw className={cn('h-3 w-3', rescanning && 'animate-spin')} />
+        {rescanning ? 'Scanning…' : 'Rescan'}
       </button>
     </div>
   )
