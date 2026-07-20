@@ -364,7 +364,7 @@ function loadExternalScannerOptions(): Record<string, unknown> {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const TOOLS_BY_TYPE: Record<TargetType, ScanTool[]> = {
-  url:  ['http', 'api', 'nuclei', 'nmap', 'mcp'],
+  url:  ['http', 'api', 'nuclei', 'nmap', 'openvas', 'mcp'],
   host: ['nmap', 'nuclei', 'openvas'],
   mcp:  ['mcp'],
 }

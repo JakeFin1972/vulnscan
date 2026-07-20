@@ -46,7 +46,7 @@ def run_dynamic_scan(
     # Default tool selection by target type
     if tools is None:
         if target_type == "url":
-            tools = ["http", "api", "nuclei", "nmap", "mcp"]
+            tools = ["http", "api", "nuclei", "nmap", "openvas", "mcp"]
         elif target_type == "host":
             tools = ["nmap", "nuclei", "openvas"]
         elif target_type == "mcp":
