@@ -21,6 +21,8 @@ dependencies = [
     "zaproxy>=0.3",
     "python-gvm>=24",
     "tree-sitter-typescript",
+    "anthropic",
+    "sslyze>=5",
 ]
 
 [project.optional-dependencies]
