@@ -96,7 +96,8 @@ def run_dynamic_scan(
             findings.extend(openvas_scanner.scan(
                 host,
                 host=ov_opts.get("host"),
-                port=ov_opts.get("port"),
+                port=int(ov_opts["port"]) if ov_opts.get("port") else None,
+                socket=ov_opts.get("socket"),
                 user=ov_opts.get("user"),
                 password=ov_opts.get("password"),
             ))
