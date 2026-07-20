@@ -364,8 +364,8 @@ function loadExternalScannerOptions(): Record<string, unknown> {
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 const TOOLS_BY_TYPE: Record<TargetType, ScanTool[]> = {
-  url:  ['http', 'api', 'nuclei', 'nmap', 'openvas', 'mcp'],
-  host: ['nmap', 'nuclei', 'openvas'],
+  url:  ['http', 'api', 'nuclei', 'nmap', 'openvas', 'sslyze', 'mcp'],
+  host: ['nmap', 'nuclei', 'openvas', 'sslyze', 'subfinder'],
   mcp:  ['mcp'],
 }
 
@@ -469,7 +469,7 @@ export default function DynamicScanPage() {
     )
   }
 
-  const allTools: ScanTool[] = ['http', 'api', 'nuclei', 'nmap', 'zap', 'openvas', 'mcp']
+  const allTools: ScanTool[] = ['http', 'api', 'nuclei', 'nmap', 'zap', 'openvas', 'sslyze', 'subfinder', 'mcp']
 
   const sevCounts = findings.reduce<Record<string, number>>((acc, f) => {
     acc[f.severity] = (acc[f.severity] ?? 0) + 1
@@ -486,7 +486,7 @@ export default function DynamicScanPage() {
             <Shield className="h-5 w-5 text-teal-500" />
             <h1 className="text-lg font-semibold text-slate-100">Dynamic Scan</h1>
           </div>
-          <p className="text-xs text-slate-500">Active security scanning with NMAP, ZAP, OpenVAS and MCP</p>
+          <p className="text-xs text-slate-500">Active security scanning with NMAP, ZAP, OpenVAS, SSLyze, Subfinder and more</p>
         </div>
 
         {/* Scanner availability */}

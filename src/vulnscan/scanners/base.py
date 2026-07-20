@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 TargetType = Literal["url", "host", "mcp"]
-ScanTool   = Literal["nmap", "zap", "openvas", "mcp"]
+ScanTool   = Literal["nmap", "http", "api", "zap", "openvas", "mcp", "nuclei", "sslyze", "subfinder"]
 Severity   = Literal["critical", "high", "medium", "low", "info"]
 
 
