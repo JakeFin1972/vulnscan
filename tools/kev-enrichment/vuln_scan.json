@@ -1,0 +1,22 @@
+[
+  {"cve": "CVE-2021-44228", "asset": "app-server-01", "severity": "critical", "service": "Apache Log4j2"},
+  {"cve": "CVE-2023-44487", "asset": "web-proxy-02",  "severity": "high",     "service": "nginx 1.18"},
+  {"cve": "CVE-2022-30190", "asset": "workstation-07","severity": "high",     "service": "Microsoft MSDT"},
+  {"cve": "CVE-2023-23397", "asset": "mail-server-01","severity": "critical", "service": "Microsoft Outlook"},
+  {"cve": "CVE-2024-3400",  "asset": "fw-edge-01",    "severity": "critical", "service": "Palo Alto PAN-OS"},
+  {"cve": "CVE-2022-42889", "asset": "app-server-03", "severity": "critical", "service": "Apache Commons Text"},
+  {"cve": "CVE-2023-4863",  "asset": "web-server-03", "severity": "high",     "service": "libwebp"},
+  {"cve": "CVE-2023-20198", "asset": "router-core-01","severity": "critical", "service": "Cisco IOS XE"},
+  {"cve": "CVE-2021-34527", "asset": "dc-server-01",  "severity": "critical", "service": "Windows Print Spooler"},
+  {"cve": "CVE-2022-1292",  "asset": "app-server-02", "severity": "critical", "service": "OpenSSL c_rehash"},
+  {"cve": "CVE-2023-0386",  "asset": "linux-host-05", "severity": "high",     "service": "Linux kernel 6.1"},
+  {"cve": "CVE-2023-32233", "asset": "linux-host-06", "severity": "medium",   "service": "Linux netfilter"},
+  {"cve": "CVE-2022-36537", "asset": "app-server-04", "severity": "medium",   "service": "ZK Framework"},
+  {"cve": "CVE-2023-22515", "asset": "wiki-server-01","severity": "critical", "service": "Atlassian Confluence"},
+  {"cve": "CVE-2023-46604", "asset": "mq-server-01",  "severity": "critical", "service": "Apache ActiveMQ"},
+  {"cve": "CVE-2024-21762", "asset": "fw-edge-02",    "severity": "critical", "service": "Fortinet FortiOS"},
+  {"cve": "CVE-2022-21587", "asset": "erp-server-01", "severity": "critical", "service": "Oracle E-Business Suite"},
+  {"cve": "CVE-2023-6548",  "asset": "lb-01",         "severity": "medium",   "service": "Citrix NetScaler"},
+  {"cve": "CVE-2024-1709",  "asset": "support-portal", "severity": "critical","service": "ConnectWise ScreenConnect"},
+  {"cve": "CVE-2021-20038", "asset": "vpn-gw-01",     "severity": "critical", "service": "SonicWall SMA"}
+]
