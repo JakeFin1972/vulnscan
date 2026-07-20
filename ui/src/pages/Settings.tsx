@@ -25,6 +25,7 @@ interface ZapConfig {
 interface OpenVasConfig {
   host: string
   port: string
+  socket: string
   user: string
   password: string
 }
@@ -45,9 +46,9 @@ function loadZapConfig(): ZapConfig {
 function loadOpenVasConfig(): OpenVasConfig {
   try {
     const stored = JSON.parse(localStorage.getItem(OPENVAS_CONFIG_KEY) ?? 'null')
-    if (stored) return stored as OpenVasConfig
+    if (stored) return { socket: '', ...stored } as OpenVasConfig
   } catch {}
-  return { host: 'localhost', port: '9390', user: 'admin', password: 'admin' }
+  return { host: 'localhost', port: '9390', socket: '', user: 'admin', password: 'admin' }
 }
 
 function loadNmapConfig(): NmapConfig {
@@ -504,32 +505,55 @@ export default function Settings() {
             {openvasAvailable ? 'connected' : 'not connected'}
           </span>
         </div>
-        <p className="text-xs text-slate-500">
-          Start with Docker (initialises in ~10 min on first run):{' '}
-          <code className="font-mono text-slate-400 break-all">
-            docker run -d --name openvas -p 9390:9390 -p 9392:9392 securecompliance/gvm
+        <div className="space-y-1.5 text-xs text-slate-500">
+          <p>Start with Docker (NVT feeds initialise in ~10 min on first run):</p>
+          <code className="block font-mono text-slate-400 break-all bg-slate-950 rounded px-2 py-1.5">
+            docker run -d --name openvas -p 9390:9390 greenbone/gvm
           </code>
-        </p>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">Host</label>
-            <input
-              type="text"
-              value={openVasConfig.host}
-              onChange={e => setOpenVasConfig(c => ({ ...c, host: e.target.value }))}
-              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
-            />
-          </div>
-          <div>
-            <label className="block text-xs text-slate-500 mb-1">Port</label>
-            <input
-              type="text"
-              value={openVasConfig.port}
-              onChange={e => setOpenVasConfig(c => ({ ...c, port: e.target.value }))}
-              className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
-            />
+          <p className="text-slate-600">
+            Or with a Unix socket (when GVM runs on the same host):{' '}
+            <code className="font-mono">OPENVAS_SOCKET=/run/gvm/gvmd.sock</code>
+          </p>
+        </div>
+
+        {/* Unix socket (optional, takes priority over host/port) */}
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">
+            Unix Socket <span className="text-slate-600">(optional — overrides host/port)</span>
+          </label>
+          <input
+            type="text"
+            value={openVasConfig.socket}
+            onChange={e => setOpenVasConfig(c => ({ ...c, socket: e.target.value }))}
+            placeholder="/run/gvm/gvmd.sock"
+            className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 placeholder:text-slate-600 focus:outline-none focus:border-teal-600"
+          />
+        </div>
+
+        {/* Host / Port */}
+        <div className={openVasConfig.socket ? 'opacity-40 pointer-events-none' : ''}>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Host</label>
+              <input
+                type="text"
+                value={openVasConfig.host}
+                onChange={e => setOpenVasConfig(c => ({ ...c, host: e.target.value }))}
+                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">Port</label>
+              <input
+                type="text"
+                value={openVasConfig.port}
+                onChange={e => setOpenVasConfig(c => ({ ...c, port: e.target.value }))}
+                className="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-sm font-mono text-slate-200 focus:outline-none focus:border-teal-600"
+              />
+            </div>
           </div>
         </div>
+
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="block text-xs text-slate-500 mb-1">Username</label>
@@ -568,7 +592,8 @@ export default function Settings() {
         </div>
         {!openvasAvailable && (
           <p className="text-[10px] text-slate-600">
-            Container is running at localhost:9390 — GVM initialises NVT feeds on first start (~10 min). Watch logs: <code className="font-mono">docker logs -f openvas</code>
+            If the container is running, GVM may still be initialising NVT feeds (~10 min).
+            Watch: <code className="font-mono">docker logs -f openvas</code>
           </p>
         )}
       </section>

@@ -334,7 +334,18 @@ function loadExternalScannerOptions(): Record<string, unknown> {
   } catch {}
   try {
     const ov = JSON.parse(localStorage.getItem('vulnscan_openvas_config') ?? 'null')
-    if (ov) opts['openvas'] = ov
+    if (ov) {
+      // Only pass non-empty fields so defaults from env vars remain active
+      const clean: Record<string, string> = {}
+      if (ov.socket?.trim()) { clean['socket'] = ov.socket.trim() }
+      else {
+        if (ov.host?.trim())  clean['host'] = ov.host.trim()
+        if (ov.port?.trim())  clean['port'] = ov.port.trim()
+      }
+      if (ov.user?.trim())     clean['user']     = ov.user.trim()
+      if (ov.password?.trim()) clean['password'] = ov.password.trim()
+      if (Object.keys(clean).length) opts['openvas'] = clean
+    }
   } catch {}
   try {
     const nm = JSON.parse(localStorage.getItem('vulnscan_nmap_config') ?? 'null')
