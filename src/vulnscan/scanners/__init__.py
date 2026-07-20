@@ -9,7 +9,7 @@ from .base import DynamicFinding, TargetType, ScanTool
 from . import (
     nmap_scanner, zap_scanner, openvas_scanner, mcp_scanner,
     http_scanner, api_scanner, nuclei_scanner,
-    sslyze_scanner, subfinder_scanner,
+    sslyze_scanner, subfinder_scanner, nikto_scanner,
 )
 
 
@@ -34,6 +34,8 @@ def tool_status() -> dict[str, dict]:
                       "description": "Deep TLS/SSL analysis: deprecated protocols, certificate issues, Heartbleed, ROBOT, CRIME (requires sslyze)"},
         "subfinder": {"available": subfinder_scanner.is_available(),
                       "description": "Passive subdomain enumeration from 50+ sources (requires subfinder binary)"},
+        "nikto":     {"available": nikto_scanner.is_available(),
+                      "description": "Web server scanner: dangerous files, outdated software, misconfigs, default credentials (requires nikto)"},
     }
 
 
@@ -54,9 +56,9 @@ def run_dynamic_scan(
     # Default tool selection by target type
     if tools is None:
         if target_type == "url":
-            tools = ["http", "api", "nuclei", "nmap", "openvas", "sslyze", "mcp"]
+            tools = ["http", "api", "nuclei", "nmap", "openvas", "sslyze", "nikto", "mcp"]
         elif target_type == "host":
-            tools = ["nmap", "nuclei", "openvas", "sslyze", "subfinder"]
+            tools = ["nmap", "nuclei", "openvas", "sslyze", "nikto", "subfinder"]
         elif target_type == "mcp":
             tools = ["mcp"]
         else:
@@ -119,6 +121,10 @@ def run_dynamic_scan(
 
         elif tool == "subfinder":
             findings.extend(subfinder_scanner.scan(target, options=tool_opts))
+
+        elif tool == "nikto":
+            url = target if target.startswith("http") else f"http://{target}"
+            findings.extend(nikto_scanner.scan(url, options=tool_opts))
 
     return findings
 
