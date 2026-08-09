@@ -202,6 +202,22 @@ def _init_db() -> None:
                 FOREIGN KEY(asset_id) REFERENCES easm_assets(id)
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ai_boost_results (
+                scan_id     TEXT PRIMARY KEY,
+                result_json TEXT NOT NULL,
+                model       TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS ai_reports (
+                scan_id     TEXT PRIMARY KEY,
+                report_json TEXT NOT NULL,
+                model       TEXT NOT NULL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
 
 
 # ── Severity mapping ───────────────────────────────────────────────────────────
@@ -416,6 +432,38 @@ def start_scan(req: StartScanRequest, bg: BackgroundTasks):
         )
     bg.add_task(_run_scan, scan_id, str(root.resolve()))
     return {"id": scan_id}
+
+
+@app.post("/scans/upload", status_code=201)
+async def upload_scan(
+    bg: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+):
+    """Accept one or more uploaded files, save to a temp dir, and scan them."""
+    import tempfile, shutil
+
+    scan_id = str(uuid.uuid4())
+    # Persistent temp dir — kept until the scan finishes (deleted in _run_scan)
+    tmp_dir = Path(tempfile.mkdtemp(prefix=f"vulnscan_upload_{scan_id}_"))
+
+    saved: list[str] = []
+    for upload in files:
+        dest = tmp_dir / (upload.filename or f"file_{len(saved)}")
+        # Avoid path traversal in filename
+        dest = tmp_dir / Path(dest.name).name
+        content = await upload.read()
+        dest.write_bytes(content)
+        saved.append(dest.name)
+
+    label = saved[0] if len(saved) == 1 else f"{len(saved)} files"
+
+    with _db() as conn:
+        conn.execute(
+            "INSERT INTO scans (id, path, status) VALUES (?, ?, 'pending')",
+            (scan_id, str(tmp_dir))
+        )
+    bg.add_task(_run_scan, scan_id, str(tmp_dir))
+    return {"id": scan_id, "path": str(tmp_dir), "files": saved}
 
 
 @app.get("/scans")
@@ -889,13 +937,169 @@ def ai_boost(req: AiBoostRequest):
 
     # Count confirmed findings
     confirmed = [r for r in results if r.get("ai", {}).get("verdict") == "confirmed"]
+
+    # Cache boost results
+    model_name = _ai.active_model()
+    result_json = json.dumps(results)
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO ai_boost_results (scan_id, result_json, model)
+               VALUES (?, ?, ?)
+               ON CONFLICT(scan_id) DO UPDATE SET
+                 result_json=excluded.result_json,
+                 model=excluded.model,
+                 created_at=datetime('now')""",
+            (req.scan_id, result_json, model_name),
+        )
+
     return {
         "scan_id": req.scan_id,
         "pairs_analyzed": len(results),
         "confirmed": len(confirmed),
-        "model": _ai.active_model(),
+        "model": model_name,
         "results": results,
     }
+
+
+@app.post("/ai/boost-all")
+def ai_boost_all():
+    """Run AI taint boost on every eligible scan (status='done', pair_count>0)."""
+    if not _ai.is_available():
+        raise HTTPException(status_code=503, detail="AI not available: set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+
+    with _db() as conn:
+        rows = conn.execute(
+            "SELECT * FROM scans WHERE status='done' AND pair_count > 0 ORDER BY created_at DESC"
+        ).fetchall()
+
+    all_results = []
+    total_pairs = 0
+    total_confirmed = 0
+    model_name = _ai.active_model()
+
+    for row in rows:
+        scan = dict(row)
+        report_raw = scan.get("report_json") or "{}"
+        report = json.loads(report_raw) if isinstance(report_raw, str) else (report_raw or {})
+
+        try:
+            results = _ai.boost_scan(report, max_pairs=20)
+        except Exception as exc:  # noqa: BLE001
+            all_results.append({
+                "scan_id": scan["id"],
+                "path": scan["path"],
+                "pairs_analyzed": 0,
+                "confirmed": 0,
+                "error": str(exc),
+                "results": [],
+            })
+            continue
+
+        confirmed = [r for r in results if r.get("ai", {}).get("verdict") == "confirmed"]
+        total_pairs += len(results)
+        total_confirmed += len(confirmed)
+
+        # Cache boost results
+        result_json = json.dumps(results)
+        with _db() as conn:
+            conn.execute(
+                """INSERT INTO ai_boost_results (scan_id, result_json, model)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(scan_id) DO UPDATE SET
+                     result_json=excluded.result_json,
+                     model=excluded.model,
+                     created_at=datetime('now')""",
+                (scan["id"], result_json, model_name),
+            )
+
+        all_results.append({
+            "scan_id": scan["id"],
+            "path": scan["path"],
+            "pairs_analyzed": len(results),
+            "confirmed": len(confirmed),
+            "results": results,
+        })
+
+    return {
+        "scans_boosted": len(all_results),
+        "total_pairs": total_pairs,
+        "total_confirmed": total_confirmed,
+        "model": model_name,
+        "results": all_results,
+    }
+
+
+class AiReportRequest(BaseModel):
+    scan_id: str
+
+
+@app.post("/ai/report")
+def ai_generate_report(req: AiReportRequest):
+    """Generate an enriched AI executive report for a static scan."""
+    if not _ai.is_available():
+        raise HTTPException(status_code=503, detail="AI not available: set OPENAI_API_KEY or ANTHROPIC_API_KEY")
+
+    with _db() as conn:
+        scan_row = conn.execute("SELECT * FROM scans WHERE id=?", (req.scan_id,)).fetchone()
+        if scan_row is None:
+            raise HTTPException(status_code=404, detail="Scan not found")
+        scan_meta = dict(scan_row)
+
+        findings_rows = conn.execute(
+            "SELECT * FROM findings WHERE scan_id=?", (req.scan_id,)
+        ).fetchall()
+        findings = [dict(r) for r in findings_rows]
+
+        boost_row = conn.execute(
+            "SELECT result_json FROM ai_boost_results WHERE scan_id=?", (req.scan_id,)
+        ).fetchone()
+
+    boost_results: list[dict] = []
+    if boost_row:
+        try:
+            boost_results = json.loads(boost_row["result_json"])
+        except Exception:  # noqa: BLE001
+            boost_results = []
+
+    try:
+        report = _ai.generate_report(
+            scan_path=scan_meta.get("path", ""),
+            boost_results=boost_results,
+            findings=findings,
+            scan_meta=scan_meta,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    model_name = _ai.active_model()
+    report_json = json.dumps(report)
+    with _db() as conn:
+        conn.execute(
+            """INSERT INTO ai_reports (scan_id, report_json, model)
+               VALUES (?, ?, ?)
+               ON CONFLICT(scan_id) DO UPDATE SET
+                 report_json=excluded.report_json,
+                 model=excluded.model,
+                 created_at=datetime('now')""",
+            (req.scan_id, report_json, model_name),
+        )
+
+    return report
+
+
+@app.get("/ai/report/{scan_id}")
+def ai_get_report(scan_id: str):
+    """Return a cached AI report for a scan, or 404 if not generated yet."""
+    with _db() as conn:
+        row = conn.execute(
+            "SELECT report_json FROM ai_reports WHERE scan_id=?", (scan_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Report not generated yet. POST /ai/report to generate.")
+    try:
+        return json.loads(row["report_json"])
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=f"Corrupt report JSON: {exc}") from exc
 
 
 @app.get("/health")

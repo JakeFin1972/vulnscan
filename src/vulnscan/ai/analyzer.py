@@ -279,6 +279,84 @@ def boost_scan(
     return results
 
 
+def generate_report(
+    scan_path: str,
+    boost_results: list[dict],
+    findings: list[dict],
+    scan_meta: dict,
+) -> dict:
+    """Generate an AI executive report for a completed static scan."""
+    confirmed    = [r for r in boost_results if r.get("ai", {}).get("verdict") == "confirmed"]
+    false_pos    = [r for r in boost_results if r.get("ai", {}).get("verdict") == "false_positive"]
+    needs_review = [r for r in boost_results if r.get("ai", {}).get("verdict") == "needs_review"]
+
+    # Build top-vuln block (up to 10 confirmed)
+    top_vulns_text = ""
+    for i, r in enumerate(confirmed[:10], 1):
+        ai   = r.get("ai", {})
+        sink = r.get("sink", {})
+        top_vulns_text += (
+            f"  {i}. {ai.get('vulnerability_title', 'Unknown')} | "
+            f"CWE: {ai.get('cwe', 'N/A')} | "
+            f"Severity: {ai.get('severity', 'unknown')} | "
+            f"File: {sink.get('file', '')}:{sink.get('line', 0)} | "
+            f"Exploit difficulty: {ai.get('exploit_difficulty', 'unknown')}\n"
+        )
+
+    # Detect language from findings
+    langs = {f.get("language", "") for f in findings if f.get("language")}
+    language = ", ".join(sorted(langs)) or "unknown"
+
+    prompt = textwrap.dedent(f"""\
+    Generate a comprehensive security executive report for this codebase scan. Respond ONLY with the JSON structure below.
+
+    SCAN DETAILS:
+    - Path: {scan_path}
+    - Language(s): {language}
+    - Total sources found: {scan_meta.get('source_count', 0)}
+    - Total sinks found:   {scan_meta.get('sink_count', 0)}
+    - Total pairs analyzed: {scan_meta.get('pair_count', 0)}
+
+    AI TAINT ANALYSIS RESULTS:
+    - Confirmed vulnerabilities: {len(confirmed)}
+    - False positives: {len(false_pos)}
+    - Needs review: {len(needs_review)}
+
+    TOP CONFIRMED VULNERABILITIES:
+    {top_vulns_text or '  (none — no confirmed vulnerabilities found)'}
+
+    Respond ONLY with this JSON (no markdown fences):
+    {{
+      "executive_summary": "3-5 sentence overview for a CISO",
+      "risk_rating": "critical|high|medium|low",
+      "risk_score": 0-100,
+      "attack_surface": "description of entry points and exposure",
+      "confirmed_count": {len(confirmed)},
+      "false_positive_count": {len(false_pos)},
+      "needs_review_count": {len(needs_review)},
+      "top_vulnerabilities": [
+        {{
+          "title": "...",
+          "cwe": "CWE-NNN",
+          "severity": "critical|high|medium|low",
+          "file": "relative/path/to/file.py",
+          "line": 42,
+          "impact": "1-2 sentence impact description",
+          "priority": 1
+        }}
+      ],
+      "remediation_roadmap": [
+        {{ "priority": 1, "action": "...", "effort": "low|medium|high", "impact": "..." }}
+      ],
+      "security_posture": "1-2 sentence overall assessment",
+      "recommendations": ["Recommendation 1", "Recommendation 2", "Recommendation 3"]
+    }}
+    """)
+
+    raw = _call_ai(prompt)
+    return _parse_json(raw)
+
+
 def _read_snippet(file: str, line: int, context: int = 6) -> str:
     """Read lines around `line` from `file`."""
     try:

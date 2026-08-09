@@ -61,6 +61,18 @@ export const getScan = (id: string) => request<Scan>('GET', `/scans/${id}`)
 export const startScan = (path: string) =>
   request<{ id: string }>('POST', '/scans', { path, authorized: true })
 
+export const uploadScan = async (files: File[]): Promise<{ id: string; path: string; files: string[] }> => {
+  const form = new FormData()
+  files.forEach(f => form.append('files', f))
+  const url = `${localStorage.getItem('vulnscan_api_url') ?? 'http://localhost:8765'}/scans/upload`
+  const res = await fetch(url, { method: 'POST', body: form })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({})) as { detail?: string }
+    throw new Error(err.detail ?? res.statusText)
+  }
+  return res.json()
+}
+
 // Findings
 export const listFindings = (params: {
   scan_id?: string
@@ -165,6 +177,50 @@ export const aiAnalyzeDynamicFinding = (findingId: string) =>
 
 export const aiBoostScan = (scanId: string, maxPairs = 20) =>
   request<AiBoostResponse>('POST', '/ai/boost', { scan_id: scanId, max_pairs: maxPairs })
+
+export interface AiReport {
+  executive_summary: string
+  risk_rating: 'critical' | 'high' | 'medium' | 'low'
+  risk_score: number
+  attack_surface: string
+  confirmed_count: number
+  false_positive_count: number
+  needs_review_count: number
+  top_vulnerabilities: {
+    title: string
+    cwe: string
+    severity: string
+    file: string
+    line: number
+    impact: string
+    priority: number
+  }[]
+  remediation_roadmap: {
+    priority: number
+    action: string
+    effort: string
+    impact: string
+  }[]
+  security_posture: string
+  recommendations: string[]
+}
+
+export interface AiBoostAllResult {
+  scans_boosted: number
+  total_pairs: number
+  total_confirmed: number
+  model: string
+  results: (AiBoostResponse & { path: string })[]
+}
+
+export const aiBoostAll = () =>
+  request<AiBoostAllResult>('POST', '/ai/boost-all', {})
+
+export const aiGenerateReport = (scanId: string) =>
+  request<AiReport>('POST', '/ai/report', { scan_id: scanId })
+
+export const aiGetReport = (scanId: string) =>
+  request<AiReport>('GET', `/ai/report/${scanId}`)
 
 // Scanners
 export const listScanners = () =>
