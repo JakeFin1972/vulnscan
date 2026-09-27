@@ -59,7 +59,7 @@ async function boot() {
 }
 
 function buildSteps(config) {
-  const steps = [{ id: "project_info", group: "Getting started", title: "Project information" }];
+  const steps = [{ id: "project_info", group: "Getting started", title: "Project/tool/application information" }];
   config.tools.bia.sections.forEach((s) =>
     steps.push({ id: "bia." + s.key, group: "Business Impact Assessment", title: s.title, tool: "bia", sectionKey: s.key })
   );
@@ -101,13 +101,13 @@ async function renderLanding() {
     <main class="content" style="max-width:760px">
       <div class="landing" style="margin-top:20px">
         <h1>Business Impact & Privacy Assessments</h1>
-        <p class="muted">Answer a short set of guided questions to assess the business impact of a project or
-        solution, and find out whether a full Data Privacy Impact Assessment (DPIA) is needed.</p>
+        <p class="muted">Answer a short set of guided questions to assess the business impact of a
+        project/tool/application, and find out whether a full Data Privacy Impact Assessment (DPIA) is needed.</p>
       </div>
       <div class="card">
         <h2>Start a new assessment</h2>
         <div class="field-row">
-          <div><label>Project name</label><input id="new-project-name" type="text" placeholder="e.g. Loyalty App Revamp"></div>
+          <div><label>Project/tool/application name</label><input id="new-project-name" type="text" placeholder="e.g. Loyalty App Revamp"></div>
         </div>
         <div class="field-row">
           <div><label>Your name</label><input id="new-completed-by" type="text"></div>
@@ -159,9 +159,12 @@ async function renderLanding() {
             <span class="pill ${a.status}">${a.status}</span>
             <div class="muted" style="font-size:0.82em">Updated ${new Date(a.updated_at).toLocaleString()}</div>
           </div>
-          <div class="col-narrow" style="flex:0 0 auto;display:flex;gap:6px">
+          <div class="col-narrow" style="flex:0 0 auto;display:flex;gap:6px;flex-wrap:wrap">
             <a class="btn small" href="#/a/${a.id}/project_info">Open</a>
             <a class="btn small" href="/api/assessments/${a.id}/print" target="_blank">Report</a>
+            <a class="btn small" href="/api/assessments/${a.id}/export.docx">Word</a>
+            <a class="btn small" href="/api/assessments/${a.id}/export.pdf">PDF</a>
+            <a class="btn small" href="/api/assessments/${a.id}/export.csv">CSV</a>
           </div>
         </div>`
         )
@@ -559,14 +562,14 @@ function renderProjectInfoStep(content) {
   const a = state.assessment;
   content.innerHTML = `
     <div class="card">
-      <h2>Project key information</h2>
-      <p class="desc">Basic details about the project or solution being assessed.</p>
+      <h2>Project/tool/application key information</h2>
+      <p class="desc">Basic details about the project/tool/application being assessed.</p>
       <div class="field-row">
-        <div><label>Project name</label><input data-f="project_name" type="text" value="${escapeHtml(a.project_name)}"></div>
+        <div><label>Project/tool/application name</label><input data-f="project_name" type="text" value="${escapeHtml(a.project_name)}"></div>
         <div><label>Country/countries or business unit impacted</label><input data-f="countries" type="text" value="${escapeHtml(a.countries)}"></div>
       </div>
-      <div class="question"><label class="prompt">Description of the project</label>
-        <div class="guidance">Brief summary indicating the key features of the project.</div>
+      <div class="question"><label class="prompt">Description of the project/tool/application</label>
+        <div class="guidance">Brief summary indicating the key features of the project/tool/application.</div>
         <textarea data-f="description">${escapeHtml(a.description)}</textarea>
       </div>
       <div class="field-row">
@@ -639,12 +642,21 @@ function renderReviewStep(content) {
     <div class="card">
       <h2>Review & submit</h2>
       <p class="desc">Status: <span class="pill ${a.status}">${a.status}</span></p>
-      <p>Use the <a href="/api/assessments/${a.id}/print" target="_blank">full report view</a> to review every answer, or print/save it as a PDF from your browser.</p>
+      <p>Use the <a href="/api/assessments/${a.id}/print" target="_blank">full report view</a> to review every answer in the browser.</p>
       <div style="display:flex;gap:10px;margin-top:16px">
         ${submitted
           ? `<button class="btn" id="reopen-btn">Reopen for editing</button>`
           : `<button class="btn primary" id="submit-btn">Submit assessment</button>`}
         <button class="btn danger" id="delete-btn">Delete this assessment</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Export report</h2>
+      <p class="desc">Download the full assessment -- project/tool/application info, computed protection level, DPIA screening result and every answer -- in a shareable format.</p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <a class="btn" href="/api/assessments/${a.id}/export.docx">Download Word (.docx)</a>
+        <a class="btn" href="/api/assessments/${a.id}/export.pdf">Download PDF</a>
+        <a class="btn" href="/api/assessments/${a.id}/export.csv">Download CSV</a>
       </div>
     </div>
   `;

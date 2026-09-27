@@ -13,7 +13,10 @@ from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-from . import db, scoring
+from . import db, scoring, report as report_mod
+from .csv_writer import build_csv
+from .docx_writer import build_docx
+from .pdf_writer import build_pdf
 
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
@@ -301,9 +304,9 @@ def print_assessment(h, m, body):
         "th{background:#f0f0f0}.muted{color:#666;font-size:0.9em}",
         ".badge{display:inline-block;padding:2px 10px;border-radius:10px;background:#eee;font-weight:bold}",
         "</style></head><body>",
-        f"<h1>Business Impact Assessment &amp; DPIA -- {a['project_name'] or '(untitled project)'}</h1>",
+        f"<h1>Business Impact Assessment &amp; DPIA -- {a['project_name'] or '(untitled project/tool/application)'}</h1>",
         "<table>",
-        f"<tr><th>Project name</th><td>{a['project_name']}</td></tr>",
+        f"<tr><th>Project/tool/application name</th><td>{a['project_name']}</td></tr>",
         f"<tr><th>Description</th><td>{a['description']}</td></tr>",
         f"<tr><th>Country/countries/business unit</th><td>{a['countries']}</td></tr>",
         f"<tr><th>Project manager</th><td>{a['project_manager']}</td></tr>",
@@ -355,6 +358,33 @@ def print_assessment(h, m, body):
     parts.append("</body></html>")
     html = "".join(parts)
     return 200, ("text/html", html.encode("utf-8"))
+
+
+def _export_report(aid):
+    payload = assessment_payload(aid)
+    config = db.get_config()
+    return report_mod.build_report(config, payload["assessment"], payload["answers"], payload["results"]), payload["assessment"]
+
+
+@route("GET", r"/api/assessments/(?P<id>\d+)/export\.csv")
+def export_csv(h, m, body):
+    report, assessment = _export_report(int(m.group("id")))
+    filename = report_mod.report_filename(assessment, "csv")
+    return 200, ("text/csv; charset=utf-8", build_csv(report), filename)
+
+
+@route("GET", r"/api/assessments/(?P<id>\d+)/export\.docx")
+def export_docx(h, m, body):
+    report, assessment = _export_report(int(m.group("id")))
+    filename = report_mod.report_filename(assessment, "docx")
+    return 200, ("application/vnd.openxmlformats-officedocument.wordprocessingml.document", build_docx(report), filename)
+
+
+@route("GET", r"/api/assessments/(?P<id>\d+)/export\.pdf")
+def export_pdf(h, m, body):
+    report, assessment = _export_report(int(m.group("id")))
+    filename = report_mod.report_filename(assessment, "pdf")
+    return 200, ("application/pdf", build_pdf(report), filename)
 
 
 # --------------------------------------------------------------- handler ---
@@ -415,8 +445,9 @@ class Handler(BaseHTTPRequestHandler):
                     except Exception as e:  # noqa: BLE001
                         return self._send_json(500, {"error": str(e)})
                     if isinstance(payload, tuple):
-                        content_type, raw = payload
-                        return self._send_raw(status, content_type, raw)
+                        content_type, raw, *rest = payload
+                        filename = rest[0] if rest else None
+                        return self._send_raw(status, content_type, raw, filename)
                     return self._send_json(status, payload)
             return self._send_json(404, {"error": "Not found."})
 
@@ -446,10 +477,12 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _send_raw(self, status, content_type, raw):
+    def _send_raw(self, status, content_type, raw, filename=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(raw)))
+        if filename:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         if getattr(self, "_set_cookie_header", None):
             self.send_header("Set-Cookie", self._set_cookie_header)
         self.end_headers()

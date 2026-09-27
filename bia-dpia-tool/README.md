@@ -27,6 +27,9 @@ source workbook were intentionally left out (their content lives in the
 - **A built-in reference guide** (Impact Scales, Classification Matrix,
   Important Information Assets) so people can self-classify consistently
   without needing to ask Security/Privacy every time.
+- **Export to Word, PDF or CSV**, in addition to the in-browser report view --
+  all three are generated with zero extra dependencies (hand-rolled, minimal
+  but valid OOXML/PDF writers using only the standard library).
 - **Everything is admin-editable at runtime**, with no code changes:
   every question, its guidance text, input type and options; every dropdown
   list; the impact scale table; the classification matrix; the information
@@ -60,8 +63,8 @@ also set a different starting password before first run via the
 There is a single shared admin password (no per-user admin accounts) --
 appropriate for a small internal tool. Anyone filling in an assessment does
 not need to log in; they just identify themselves via name/email on the
-project info step (used for "My assessments" lookup and as the report's
-"Completed by" field).
+project/tool/application info step (used for "My assessments" lookup and as
+the report's "Completed by" field).
 
 > Deployment note: this app has no TLS/session-hardening beyond
 > HttpOnly/SameSite cookies and does not attempt to be internet-facing
@@ -70,7 +73,7 @@ project info step (used for "My assessments" lookup and as the report's
 
 ## How it works
 
-- **Employee wizard** (`/`): a step-by-step form covering project info, the
+- **Employee wizard** (`/`): a step-by-step form covering project/tool/application info, the
   6 BIA impact categories (with per-scenario impact ratings and
   auto-computed maximum impact / classification), the computed "Is a DPIA
   needed?" result, the DPIA0 (EDPB-aligned scope) section, and the 8
@@ -79,8 +82,10 @@ project info step (used for "My assessments" lookup and as the report's
   impact flags, owner, status, due date), exactly like the source
   spreadsheet's per-row risk columns. Answers autosave as you type. A
   printable report is available at any time
-  (`/api/assessments/{id}/print`, or "Report" in the UI) -- use your
-  browser's Print -> Save as PDF for a shareable copy.
+  (`/api/assessments/{id}/print`, or "Report" in the UI), and from the
+  Review & submit step you can download the same content as a **Word
+  (.docx)**, **PDF**, or **CSV** file
+  (`/api/assessments/{id}/export.{docx,pdf,csv}`).
 - **Admin console** (`/admin.html`): password-gated. Tabs for Settings
   (org name, DPIA thresholds, risk buckets, admin password, factory
   reset), Questions & Sections (add/edit/remove questions per tool),
@@ -133,7 +138,26 @@ role, not a specific hard-coded key.
 
 - File attachments (the source workbook references attaching data-flow
   diagrams etc.; this tool captures a comment/reference instead).
-  Formal PDF generation (use the browser's print-to-PDF on the report view
-  instead -- keeps the tool dependency-free).
 - Per-user accounts/SSO (a single shared admin password gates the admin
   console; anyone can start/edit their own assessments without logging in).
+
+## Export format notes
+
+The Word and PDF exporters (`app/docx_writer.py`, `app/pdf_writer.py`) are
+small, hand-rolled writers using only the standard library -- no
+`python-docx`, `reportlab`, etc. -- to keep the zero-dependency promise.
+Tradeoffs versus a full library:
+
+- The PDF uses the 2 standard, non-embedded fonts (Helvetica /
+  Helvetica-Bold) and estimates word-wrap from an average character width
+  rather than real font metrics, so line breaks are close but not
+  typeset-perfect. Text is encoded as WinAnsi (cp1252); characters outside
+  that encoding (most non-Latin scripts, some symbols) are replaced with
+  `?` rather than crashing the export.
+- The Word document skips a `styles.xml` part entirely and uses direct
+  run formatting (bold/size) instead of named styles -- it opens cleanly in
+  Word, LibreOffice and Google Docs, but "Styles" in Word won't show a
+  custom heading style to restyle in bulk.
+- The CSV is one flat file (project info, protection level, DPIA-needed
+  reasons, then every question/answer/comment/risk field) rather than
+  multiple sheets -- there's no multi-sheet equivalent in plain CSV.
