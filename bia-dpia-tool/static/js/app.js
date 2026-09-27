@@ -515,8 +515,12 @@ function wireQuestionEvents(qContainer, tool) {
     queueSave(tool, key, obj, container, q);
   };
 
+  // Note: both listeners call the same handler directly (no shared debounce
+  // here) -- queueSave() below debounces per question key, independently.
+  // A single shared debounce across the whole container would let a rapid
+  // edit to one field cancel the pending save of another field entirely.
   qContainer.addEventListener("change", handler);
-  qContainer.addEventListener("input", debounce(handler, 500));
+  qContainer.addEventListener("input", handler);
 }
 
 function queueSave(tool, key, obj) {
