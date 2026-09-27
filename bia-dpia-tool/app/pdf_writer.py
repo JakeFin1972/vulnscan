@@ -126,19 +126,21 @@ def build_pdf(report) -> bytes:
         pdf.add_paragraph(f"{label}: {value or ''}", size=9)
     pdf.add_spacer(8)
 
-    pdf.add_heading("Protection level", level=2)
-    for p in report["protection"]:
-        line = f"{p['aspect']}: {p['max_label']}"
-        if p["classification"]:
-            line += f" — {p['classification']} (protection profile: {p['protection_profile']}, service level: {p['service_level']})"
-        pdf.add_paragraph(line, size=9)
-    pdf.add_spacer(8)
+    if report["protection"]:
+        pdf.add_heading("Protection level", level=2)
+        for p in report["protection"]:
+            line = f"{p['aspect']}: {p['max_label']}"
+            if p["classification"]:
+                line += f" — {p['classification']} (protection profile: {p['protection_profile']}, service level: {p['service_level']})"
+            pdf.add_paragraph(line, size=9)
+        pdf.add_spacer(8)
 
-    pdf.add_heading("Is a full DPIA needed?", level=2)
-    pdf.add_paragraph(report["dpia_needed"]["result"], size=10, bold=True)
-    for reason in report["dpia_needed"]["reasons"]:
-        pdf.add_paragraph(f"- {reason}", size=9, indent=10)
-    pdf.add_spacer(8)
+    if report["dpia_needed"] is not None:
+        pdf.add_heading("Is a full DPIA needed?", level=2)
+        pdf.add_paragraph(report["dpia_needed"]["result"], size=10, bold=True)
+        for reason in report["dpia_needed"]["reasons"]:
+            pdf.add_paragraph(f"- {reason}", size=9, indent=10)
+        pdf.add_spacer(8)
 
     for section in report["sections"]:
         pdf.add_heading(f"{section['tool_title']} — {section['section_title']}", level=3)

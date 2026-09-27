@@ -121,7 +121,11 @@ def list_assessments(h, m, body):
 
 @route("POST", r"/api/assessments")
 def create_assessment(h, m, body):
-    aid = db.create_assessment(body or {})
+    body = body or {}
+    scope = body.get("scope") or "both"
+    if scope not in db.VALID_SCOPES:
+        raise ApiError(400, f"scope must be one of {db.VALID_SCOPES}.")
+    aid = db.create_assessment({**body, "scope": scope})
     return 201, assessment_payload(aid)
 
 
@@ -135,7 +139,12 @@ def update_assessment(h, m, body):
     aid = int(m.group("id"))
     if db.get_assessment(aid) is None:
         raise ApiError(404, "Assessment not found.")
-    db.update_assessment_fields(aid, body or {})
+    body = body or {}
+    if "scope" in body:
+        if body["scope"] not in db.VALID_SCOPES:
+            raise ApiError(400, f"scope must be one of {db.VALID_SCOPES}.")
+        db.update_scope(aid, body["scope"])
+    db.update_assessment_fields(aid, body)
     return 200, assessment_payload(aid)
 
 
@@ -152,21 +161,30 @@ def update_answers(h, m, body):
     return 200, assessment_payload(aid)
 
 
-@route("POST", r"/api/assessments/(?P<id>\d+)/submit")
-def submit_assessment(h, m, body):
+def _require_part_in_scope(assessment, part):
+    if part not in db.scope_parts(assessment["scope"]):
+        raise ApiError(400, f"'{part}' is not in this assessment's scope ('{assessment['scope']}').")
+
+
+@route("POST", r"/api/assessments/(?P<id>\d+)/submit/(?P<part>bia|dpia)")
+def submit_part(h, m, body):
     aid = int(m.group("id"))
-    if db.get_assessment(aid) is None:
+    assessment = db.get_assessment(aid)
+    if assessment is None:
         raise ApiError(404, "Assessment not found.")
-    db.submit_assessment(aid)
+    _require_part_in_scope(assessment, m.group("part"))
+    db.set_part_status(aid, m.group("part"), "submitted")
     return 200, assessment_payload(aid)
 
 
-@route("POST", r"/api/assessments/(?P<id>\d+)/reopen")
-def reopen_assessment(h, m, body):
+@route("POST", r"/api/assessments/(?P<id>\d+)/reopen/(?P<part>bia|dpia)")
+def reopen_part(h, m, body):
     aid = int(m.group("id"))
-    if db.get_assessment(aid) is None:
+    assessment = db.get_assessment(aid)
+    if assessment is None:
         raise ApiError(404, "Assessment not found.")
-    db.reopen_assessment(aid)
+    _require_part_in_scope(assessment, m.group("part"))
+    db.set_part_status(aid, m.group("part"), "draft")
     return 200, assessment_payload(aid)
 
 
@@ -270,31 +288,7 @@ def admin_delete_assessment(h, m, body):
 
 # -------------------------------------------------------------- print-out --
 
-def _render_answer(question, answer):
-    if not answer:
-        return "<em>Not answered</em>"
-    value = answer.get("value")
-    if isinstance(value, list):
-        text = ", ".join(str(v) for v in value) or "<em>Not answered</em>"
-    elif value in (None, ""):
-        text = "<em>Not answered</em>"
-    else:
-        text = str(value)
-    comment = answer.get("comment")
-    if comment:
-        text += f"<br><span class='muted'>Comment: {comment}</span>"
-    return text
-
-
-@route("GET", r"/api/assessments/(?P<id>\d+)/print")
-def print_assessment(h, m, body):
-    aid = int(m.group("id"))
-    payload = assessment_payload(aid)
-    config = db.get_config()
-    a = payload["assessment"]
-    answers = payload["answers"]
-    results = payload["results"]
-
+def _html_report(report):
     parts = [
         "<html><head><meta charset='utf-8'><title>BIA / DPIA Report</title>",
         "<style>body{font-family:Arial,sans-serif;margin:2em;color:#1a1a1a}",
@@ -304,59 +298,54 @@ def print_assessment(h, m, body):
         "th{background:#f0f0f0}.muted{color:#666;font-size:0.9em}",
         ".badge{display:inline-block;padding:2px 10px;border-radius:10px;background:#eee;font-weight:bold}",
         "</style></head><body>",
-        f"<h1>Business Impact Assessment &amp; DPIA -- {a['project_name'] or '(untitled project/tool/application)'}</h1>",
+        "<h1>Business Impact Assessment &amp; DPIA Report</h1>",
         "<table>",
-        f"<tr><th>Project/tool/application name</th><td>{a['project_name']}</td></tr>",
-        f"<tr><th>Description</th><td>{a['description']}</td></tr>",
-        f"<tr><th>Country/countries/business unit</th><td>{a['countries']}</td></tr>",
-        f"<tr><th>Project manager</th><td>{a['project_manager']}</td></tr>",
-        f"<tr><th>Solution name</th><td>{a['solution_name']}</td></tr>",
-        f"<tr><th>Solution owner</th><td>{a['solution_owner']}</td></tr>",
-        f"<tr><th>Completed by</th><td>{a['completed_by']} ({a['completed_by_email']})</td></tr>",
-        f"<tr><th>Form date</th><td>{a['form_date']}</td></tr>",
-        f"<tr><th>Status</th><td>{a['status']}</td></tr>",
-        "</table>",
-        "<h2>Protection level (BIA results)</h2><table><tr><th>Aspect</th><th>Maximum impact</th><th>Classification</th><th>Protection profile</th><th>Service level</th></tr>",
     ]
-    for cat, entry in results["bia_categories"].items():
-        parts.append(
-            f"<tr><td>{cat.capitalize()}</td><td>{entry['max_label']}</td>"
-            f"<td>{entry.get('classification_label', '') or ''} ({entry.get('classification_code', '') or ''})</td>"
-            f"<td>{entry.get('protection_profile', '') or ''}</td><td>{entry.get('service_level', '') or ''}</td></tr>"
-        )
+    for label, value in report["meta"]:
+        parts.append(f"<tr><th>{label}</th><td>{value or ''}</td></tr>")
     parts.append("</table>")
 
-    dpia_needed = results["dpia_needed"]
-    parts.append(
-        f"<h2>Is a DPIA needed? <span class='badge'>{dpia_needed['result']}</span></h2><ul>"
-        + "".join(f"<li>{r}</li>" for r in dpia_needed["reasons"])
-        + "</ul>"
-    )
+    if report["protection"]:
+        parts.append(
+            "<h2>Protection level (BIA results)</h2><table>"
+            "<tr><th>Aspect</th><th>Maximum impact</th><th>Classification</th>"
+            "<th>Protection profile</th><th>Service level</th></tr>"
+        )
+        for p in report["protection"]:
+            parts.append(
+                f"<tr><td>{p['aspect']}</td><td>{p['max_label']}</td>"
+                f"<td>{p['classification']}</td><td>{p['protection_profile']}</td><td>{p['service_level']}</td></tr>"
+            )
+        parts.append("</table>")
 
-    for tool_key in ("bia", "dpia0", "dpia"):
-        tool = config["tools"][tool_key]
-        parts.append(f"<h2>{tool['title']}</h2>")
-        for section in tool["sections"]:
-            parts.append(f"<h3>{section['title']}</h3><table>")
-            for q in section["questions"]:
-                ans = answers.get(q["key"])
-                row = _render_answer(q, ans)
-                if q.get("has_risk_register") and ans:
-                    risk_bits = []
-                    for label, field in (
-                        ("Risk identified", "risk_identified"), ("Remediation", "remediation"),
-                        ("Likelihood", "likelihood"), ("Consequence", "consequence"),
-                        ("Risk owner", "risk_owner"), ("Status", "status"), ("Due date", "due_date"),
-                    ):
-                        if ans.get(field):
-                            risk_bits.append(f"{label}: {ans.get(field)}")
-                    if risk_bits:
-                        row += "<br><span class='muted'>" + " | ".join(risk_bits) + "</span>"
-                parts.append(f"<tr><th style='width:45%'>{q['prompt']}</th><td>{row}</td></tr>")
-            parts.append("</table>")
+    if report["dpia_needed"] is not None:
+        dn = report["dpia_needed"]
+        parts.append(
+            f"<h2>Is a DPIA needed? <span class='badge'>{dn['result']}</span></h2><ul>"
+            + "".join(f"<li>{r}</li>" for r in dn["reasons"])
+            + "</ul>"
+        )
+
+    for section in report["sections"]:
+        parts.append(f"<h2>{section['tool_title']}</h2><h3>{section['section_title']}</h3><table>")
+        for row in section["rows"]:
+            cell = row["answer"] or "<em>Not answered</em>"
+            if row["comment"]:
+                cell += f"<br><span class='muted'>Comment: {row['comment']}</span>"
+            if row["risk"]:
+                cell += "<br><span class='muted'>" + " | ".join(f"{k}: {v}" for k, v in row["risk"]) + "</span>"
+            id_prefix = f"{row['id']} " if row["id"] else ""
+            parts.append(f"<tr><th style='width:45%'>{id_prefix}{row['prompt']}</th><td>{cell}</td></tr>")
+        parts.append("</table>")
 
     parts.append("</body></html>")
-    html = "".join(parts)
+    return "".join(parts)
+
+
+@route("GET", r"/api/assessments/(?P<id>\d+)/print")
+def print_assessment(h, m, body):
+    report, _assessment = _export_report(int(m.group("id")))
+    html = _html_report(report)
     return 200, ("text/html", html.encode("utf-8"))
 
 

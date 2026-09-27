@@ -70,6 +70,9 @@ def init_db():
                 completed_by TEXT DEFAULT '',
                 completed_by_email TEXT DEFAULT '',
                 form_date TEXT DEFAULT '',
+                scope TEXT NOT NULL DEFAULT 'both',
+                bia_status TEXT NOT NULL DEFAULT 'draft',
+                dpia_status TEXT NOT NULL DEFAULT 'draft',
                 status TEXT NOT NULL DEFAULT 'draft',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
@@ -86,6 +89,7 @@ def init_db():
             """
         )
         conn.commit()
+        _migrate_assessments_columns(conn)
 
         cur = conn.execute("SELECT 1 FROM config WHERE id = 1")
         if cur.fetchone() is None:
@@ -107,6 +111,22 @@ def init_db():
 
 def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _migrate_assessments_columns(conn):
+    """Adds columns introduced after a DB was first created (SQLite has no
+    'ADD COLUMN IF NOT EXISTS'), so older on-disk databases pick them up
+    with sane defaults instead of erroring on the next query."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(assessments)")}
+    migrations = [
+        ("scope", "TEXT NOT NULL DEFAULT 'both'"),
+        ("bia_status", "TEXT NOT NULL DEFAULT 'draft'"),
+        ("dpia_status", "TEXT NOT NULL DEFAULT 'draft'"),
+    ]
+    for name, ddl in migrations:
+        if name not in existing:
+            conn.execute(f"ALTER TABLE assessments ADD COLUMN {name} {ddl}")
+    conn.commit()
 
 
 # ---------------------------------------------------------------- config ---
@@ -206,22 +226,41 @@ ASSESSMENT_FIELDS = [
     "form_date",
 ]
 
+VALID_SCOPES = ("bia", "dpia", "both")
+
+
+def scope_parts(scope: str):
+    """Which of 'bia'/'dpia' are in scope, given a scope value."""
+    return ["bia", "dpia"] if scope == "both" else [scope]
+
+
+def _overall_status(scope, bia_status, dpia_status):
+    parts_status = {"bia": bia_status, "dpia": dpia_status}
+    relevant = [parts_status[p] for p in scope_parts(scope)]
+    return "submitted" if relevant and all(s == "submitted" for s in relevant) else "draft"
+
 
 def create_assessment(fields: dict) -> int:
     conn = get_conn()
     now = _now()
+    scope = fields.get("scope") or "both"
     values = {k: fields.get(k, "") for k in ASSESSMENT_FIELDS}
+    bia_status = "draft" if scope in ("bia", "both") else "not_applicable"
+    dpia_status = "draft" if scope in ("dpia", "both") else "not_applicable"
+    columns = list(values.keys()) + ["scope", "bia_status", "dpia_status", "status", "created_at", "updated_at"]
+    placeholders = ", ".join(["?"] * len(columns))
     with _lock:
         cur = conn.execute(
-            f"""INSERT INTO assessments ({", ".join(ASSESSMENT_FIELDS)}, status, created_at, updated_at)
-                VALUES ({", ".join(["?"] * len(ASSESSMENT_FIELDS))}, 'draft', ?, ?)""",
-            [*values.values(), now, now],
+            f"INSERT INTO assessments ({', '.join(columns)}) VALUES ({placeholders})",
+            [*values.values(), scope, bia_status, dpia_status, "draft", now, now],
         )
         conn.commit()
         return cur.lastrowid
 
 
 def update_assessment_fields(assessment_id: int, fields: dict):
+    """Updates plain text fields only. Scope changes go through update_scope()
+    since they also need to recompute bia_status/dpia_status/status."""
     updates = {k: v for k, v in fields.items() if k in ASSESSMENT_FIELDS}
     if not updates:
         return
@@ -231,6 +270,29 @@ def update_assessment_fields(assessment_id: int, fields: dict):
         conn.execute(
             f"UPDATE assessments SET {set_clause}, updated_at = ? WHERE id = ?",
             [*updates.values(), _now(), assessment_id],
+        )
+        conn.commit()
+
+
+def update_scope(assessment_id: int, new_scope: str):
+    row = get_assessment(assessment_id)
+    if row is None:
+        return
+
+    def resolve(part_status, part_in_new_scope):
+        if not part_in_new_scope:
+            return "not_applicable"
+        return "draft" if part_status == "not_applicable" else part_status
+
+    new_bia = resolve(row["bia_status"], new_scope in ("bia", "both"))
+    new_dpia = resolve(row["dpia_status"], new_scope in ("dpia", "both"))
+    overall = _overall_status(new_scope, new_bia, new_dpia)
+    conn = get_conn()
+    now = _now()
+    with _lock:
+        conn.execute(
+            "UPDATE assessments SET scope = ?, bia_status = ?, dpia_status = ?, status = ?, updated_at = ? WHERE id = ?",
+            (new_scope, new_bia, new_dpia, overall, now, assessment_id),
         )
         conn.commit()
 
@@ -264,24 +326,19 @@ def delete_assessment(assessment_id: int):
         conn.commit()
 
 
-def submit_assessment(assessment_id: int):
+def set_part_status(assessment_id: int, part: str, status: str):
+    """part is 'bia' or 'dpia'; status is 'draft' or 'submitted'."""
     conn = get_conn()
     now = _now()
+    column = f"{part}_status"
     with _lock:
-        conn.execute(
-            "UPDATE assessments SET status = 'submitted', submitted_at = ?, updated_at = ? WHERE id = ?",
-            (now, now, assessment_id),
-        )
-        conn.commit()
-
-
-def reopen_assessment(assessment_id: int):
-    conn = get_conn()
-    with _lock:
-        conn.execute(
-            "UPDATE assessments SET status = 'draft', submitted_at = NULL, updated_at = ? WHERE id = ?",
-            (_now(), assessment_id),
-        )
+        conn.execute(f"UPDATE assessments SET {column} = ?, updated_at = ? WHERE id = ?", (status, now, assessment_id))
+        row = conn.execute("SELECT scope, bia_status, dpia_status FROM assessments WHERE id = ?", (assessment_id,)).fetchone()
+        overall = _overall_status(row["scope"], row["bia_status"], row["dpia_status"])
+        if overall == "submitted":
+            conn.execute("UPDATE assessments SET status = ?, submitted_at = ? WHERE id = ?", (overall, now, assessment_id))
+        else:
+            conn.execute("UPDATE assessments SET status = ?, submitted_at = NULL WHERE id = ?", (overall, assessment_id))
         conn.commit()
 
 

@@ -14,16 +14,18 @@ def build_csv(report) -> bytes:
         w.writerow([label, value])
     w.writerow([])
 
-    w.writerow(["Protection level"])
-    w.writerow(["Aspect", "Maximum impact", "Classification", "Protection profile", "Service level", "Answered"])
-    for p in report["protection"]:
-        w.writerow([p["aspect"], p["max_label"], p["classification"], p["protection_profile"], p["service_level"], p["answered"]])
-    w.writerow([])
+    if report["protection"]:
+        w.writerow(["Protection level"])
+        w.writerow(["Aspect", "Maximum impact", "Classification", "Protection profile", "Service level", "Answered"])
+        for p in report["protection"]:
+            w.writerow([p["aspect"], p["max_label"], p["classification"], p["protection_profile"], p["service_level"], p["answered"]])
+        w.writerow([])
 
-    w.writerow(["Is a DPIA needed?", report["dpia_needed"]["result"]])
-    for reason in report["dpia_needed"]["reasons"]:
-        w.writerow(["", reason])
-    w.writerow([])
+    if report["dpia_needed"] is not None:
+        w.writerow(["Is a DPIA needed?", report["dpia_needed"]["result"]])
+        for reason in report["dpia_needed"]["reasons"]:
+            w.writerow(["", reason])
+        w.writerow([])
 
     for section in report["sections"]:
         w.writerow([section["tool_title"], section["section_title"]])

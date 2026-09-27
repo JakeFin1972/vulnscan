@@ -35,8 +35,18 @@ def _value_text(answer):
     return str(value)
 
 
+SCOPE_LABELS = {"bia": "BIA only", "dpia": "DPIA only", "both": "BIA + DPIA"}
+STATUS_LABELS = {"draft": "Draft", "submitted": "Submitted", "not_applicable": "Not applicable (out of scope)"}
+
+# Which tool sections apply for a given scope, in display order.
+SCOPE_TOOLS = {"bia": ["bia"], "dpia": ["dpia0", "dpia"], "both": ["bia", "dpia0", "dpia"]}
+
+
 def build_report(config, assessment, answers, results):
     a = assessment
+    scope = a.get("scope", "both")
+    include_bia = scope in ("bia", "both")
+
     meta = [
         ("Project/tool/application name", a["project_name"]),
         ("Description", a["description"]),
@@ -46,29 +56,34 @@ def build_report(config, assessment, answers, results):
         ("Solution owner", a["solution_owner"]),
         ("Completed by", f"{a['completed_by']} ({a['completed_by_email']})".strip()),
         ("Form date", a["form_date"]),
-        ("Status", a["status"]),
+        ("Assessment scope", SCOPE_LABELS.get(scope, scope)),
     ]
+    if scope in ("bia", "both"):
+        meta.append(("BIA status", STATUS_LABELS.get(a.get("bia_status"), a.get("bia_status"))))
+    if scope in ("dpia", "both"):
+        meta.append(("DPIA status", STATUS_LABELS.get(a.get("dpia_status"), a.get("dpia_status"))))
 
     protection = []
-    for cat, entry in results["bia_categories"].items():
-        classification = ""
-        if entry.get("classification_code"):
-            classification = f"{entry.get('classification_label') or ''} ({entry['classification_code']})".strip()
-        protection.append(
-            {
-                "aspect": cat.capitalize(),
-                "max_label": entry["max_label"],
-                "classification": classification,
-                "protection_profile": entry.get("protection_profile") or "",
-                "service_level": entry.get("service_level") or "",
-                "answered": f"{entry['answered_count']}/{entry['total_questions']}",
-            }
-        )
+    if include_bia:
+        for cat, entry in results["bia_categories"].items():
+            classification = ""
+            if entry.get("classification_code"):
+                classification = f"{entry.get('classification_label') or ''} ({entry['classification_code']})".strip()
+            protection.append(
+                {
+                    "aspect": cat.capitalize(),
+                    "max_label": entry["max_label"],
+                    "classification": classification,
+                    "protection_profile": entry.get("protection_profile") or "",
+                    "service_level": entry.get("service_level") or "",
+                    "answered": f"{entry['answered_count']}/{entry['total_questions']}",
+                }
+            )
 
-    dpia_needed = results["dpia_needed"]
+    dpia_needed = results["dpia_needed"] if include_bia else None
 
     sections = []
-    for tool_key in ("bia", "dpia0", "dpia"):
+    for tool_key in SCOPE_TOOLS.get(scope, SCOPE_TOOLS["both"]):
         tool = config["tools"][tool_key]
         for section in tool["sections"]:
             rows = []
@@ -88,7 +103,7 @@ def build_report(config, assessment, answers, results):
                 )
             sections.append({"tool_title": tool["title"], "section_title": section["title"], "rows": rows})
 
-    return {"meta": meta, "protection": protection, "dpia_needed": dpia_needed, "sections": sections}
+    return {"scope": scope, "meta": meta, "protection": protection, "dpia_needed": dpia_needed, "sections": sections}
 
 
 def report_filename(assessment, ext):

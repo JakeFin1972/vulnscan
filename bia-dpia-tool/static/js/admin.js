@@ -569,15 +569,20 @@ async function renderAssessmentsTab(panel) {
       list.innerHTML = `<p class="muted">No assessments found.</p>`;
       return;
     }
+    const scopeLabels = { bia: "BIA only", dpia: "DPIA only", both: "BIA + DPIA" };
     list.innerHTML = `
       <table class="ref-table">
-        <tr><th>Project/Tool/Application</th><th>Completed by</th><th>Status</th><th>Updated</th><th></th></tr>
+        <tr><th>Project/Tool/Application</th><th>Scope</th><th>Completed by</th><th>Status</th><th>Updated</th><th></th></tr>
         ${assessments
           .map(
             (a) => `<tr>
           <td>${escapeHtml(a.project_name || "(untitled)")}</td>
+          <td>${scopeLabels[a.scope] || escapeHtml(a.scope)}</td>
           <td>${escapeHtml(a.completed_by)} ${a.completed_by_email ? `&lt;${escapeHtml(a.completed_by_email)}&gt;` : ""}</td>
-          <td><span class="pill ${a.status}">${a.status}</span></td>
+          <td>
+            <span class="pill ${a.status}">${a.status}</span>
+            ${a.scope === "both" ? `<div class="muted" style="font-size:0.78em;margin-top:2px">BIA: ${a.bia_status} &middot; DPIA: ${a.dpia_status}</div>` : ""}
+          </td>
           <td>${new Date(a.updated_at).toLocaleString()}</td>
           <td style="display:flex;gap:6px;flex-wrap:wrap">
             <a class="btn small" href="/api/assessments/${a.id}/print" target="_blank">Report</a>

@@ -22,8 +22,8 @@ const Api = (() => {
     getAssessment: (id) => req("GET", `/api/assessments/${id}`),
     updateAssessment: (id, fields) => req("PUT", `/api/assessments/${id}`, fields),
     updateAnswers: (id, tool, answers) => req("PUT", `/api/assessments/${id}/answers`, { tool, answers }),
-    submitAssessment: (id) => req("POST", `/api/assessments/${id}/submit`),
-    reopenAssessment: (id) => req("POST", `/api/assessments/${id}/reopen`),
+    submitPart: (id, part) => req("POST", `/api/assessments/${id}/submit/${part}`),
+    reopenPart: (id, part) => req("POST", `/api/assessments/${id}/reopen/${part}`),
     deleteAssessment: (id) => req("DELETE", `/api/assessments/${id}`),
 
     adminLogin: (password) => req("POST", "/api/admin/login", { password }),

@@ -73,6 +73,17 @@ the report's "Completed by" field).
 
 ## How it works
 
+- **Scope: BIA only / DPIA only / Both.** Chosen when starting a new
+  assessment, and changeable anytime from the project/tool/application info
+  step -- the wizard only shows the sections relevant to the selected scope,
+  and answers for out-of-scope sections are kept (not deleted) so switching
+  back and forth is safe. If a BIA-only assessment's screening answers
+  indicate a DPIA is needed, the Results step offers a one-click "Add DPIA
+  to this assessment" button that expands scope to Both. BIA and DPIA are
+  submitted and reopened independently on the Review & submit step (e.g. you
+  can finish and lock the BIA while the DPIA is still in progress); the
+  overall status shown elsewhere is "submitted" only once every in-scope
+  part is.
 - **Employee wizard** (`/`): a step-by-step form covering project/tool/application info, the
   6 BIA impact categories (with per-scenario impact ratings and
   auto-computed maximum impact / classification), the computed "Is a DPIA

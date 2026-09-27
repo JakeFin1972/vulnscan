@@ -14,6 +14,8 @@ const saveTimers = new Map();
 const RISK_STATUS_OPTIONS = ["Open", "In progress", "Mitigated", "Accepted", "Closed"];
 const LIKELIHOOD_LABELS = { 1: "Rare", 2: "Unlikely", 3: "Possible", 4: "Likely", 5: "Almost certain" };
 const CONSEQUENCE_LABELS = { 1: "Insignificant", 2: "Minor", 3: "Moderate", 4: "Major", 5: "Critical" };
+const SCOPE_LABELS = { bia: "Business Impact Assessment (BIA) only", dpia: "Data Privacy Impact Assessment (DPIA) only", both: "Both BIA and DPIA" };
+const SCOPE_SHORT_LABELS = { bia: "BIA only", dpia: "DPIA only", both: "BIA + DPIA" };
 
 const appEl = document.getElementById("app");
 
@@ -54,22 +56,25 @@ window.addEventListener("hashchange", render);
 async function boot() {
   state.config = await Api.getConfig();
   document.getElementById("org-name").textContent = state.config.org_name || "";
-  state.steps = buildSteps(state.config);
   render();
 }
 
-function buildSteps(config) {
+function buildSteps(config, scope) {
   const steps = [{ id: "project_info", group: "Getting started", title: "Project/tool/application information" }];
-  config.tools.bia.sections.forEach((s) =>
-    steps.push({ id: "bia." + s.key, group: "Business Impact Assessment", title: s.title, tool: "bia", sectionKey: s.key })
-  );
-  steps.push({ id: "bia_results", group: "Business Impact Assessment", title: "Results & classification" });
-  config.tools.dpia0.sections.forEach((s) =>
-    steps.push({ id: "dpia0." + s.key, group: "DPIA — Overview & Scope", title: s.title, tool: "dpia0", sectionKey: s.key })
-  );
-  config.tools.dpia.sections.forEach((s) =>
-    steps.push({ id: "dpia." + s.key, group: "DPIA — Detailed Assessment", title: s.title, tool: "dpia", sectionKey: s.key })
-  );
+  if (scope === "bia" || scope === "both") {
+    config.tools.bia.sections.forEach((s) =>
+      steps.push({ id: "bia." + s.key, group: "Business Impact Assessment", title: s.title, tool: "bia", sectionKey: s.key })
+    );
+    steps.push({ id: "bia_results", group: "Business Impact Assessment", title: "Results & classification" });
+  }
+  if (scope === "dpia" || scope === "both") {
+    config.tools.dpia0.sections.forEach((s) =>
+      steps.push({ id: "dpia0." + s.key, group: "DPIA — Overview & Scope", title: s.title, tool: "dpia0", sectionKey: s.key })
+    );
+    config.tools.dpia.sections.forEach((s) =>
+      steps.push({ id: "dpia." + s.key, group: "DPIA — Detailed Assessment", title: s.title, tool: "dpia", sectionKey: s.key })
+    );
+  }
   steps.push({ id: "review", group: "Finish", title: "Review & submit" });
   return steps;
 }
@@ -110,6 +115,16 @@ async function renderLanding() {
           <div><label>Project/tool/application name</label><input id="new-project-name" type="text" placeholder="e.g. Loyalty App Revamp"></div>
         </div>
         <div class="field-row">
+          <div>
+            <label>What do you want to complete?</label>
+            <select id="new-scope">
+              <option value="both" selected>Both BIA and DPIA</option>
+              <option value="bia">Business Impact Assessment (BIA) only</option>
+              <option value="dpia">Data Privacy Impact Assessment (DPIA) only</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-row">
           <div><label>Your name</label><input id="new-completed-by" type="text"></div>
           <div><label>Your email</label><input id="new-completed-email" type="email" value="${escapeHtml(savedEmail)}"></div>
         </div>
@@ -128,11 +143,12 @@ async function renderLanding() {
 
   document.getElementById("start-btn").onclick = async () => {
     const project_name = document.getElementById("new-project-name").value.trim();
+    const scope = document.getElementById("new-scope").value;
     const completed_by = document.getElementById("new-completed-by").value.trim();
     const completed_by_email = document.getElementById("new-completed-email").value.trim();
     if (completed_by_email) localStorage.setItem("bia_dpia_email", completed_by_email);
     try {
-      const res = await Api.createAssessment({ project_name, completed_by, completed_by_email });
+      const res = await Api.createAssessment({ project_name, scope, completed_by, completed_by_email });
       navigate(`#/a/${res.assessment.id}/project_info`);
     } catch (e) {
       toast(e.message, true);
@@ -157,6 +173,7 @@ async function renderLanding() {
         <div class="row-editable" style="align-items:center;border-bottom:1px solid var(--border);padding:8px 0">
           <div><strong>${escapeHtml(a.project_name || "(untitled)")}</strong>
             <span class="pill ${a.status}">${a.status}</span>
+            <span class="muted" style="font-size:0.82em">${SCOPE_SHORT_LABELS[a.scope] || a.scope}</span>
             <div class="muted" style="font-size:0.82em">Updated ${new Date(a.updated_at).toLocaleString()}</div>
           </div>
           <div class="col-narrow" style="flex:0 0 auto;display:flex;gap:6px;flex-wrap:wrap">
@@ -250,6 +267,7 @@ async function renderWizard(id, stepId) {
     return;
   }
 
+  state.steps = buildSteps(state.config, state.assessment.scope);
   const step = findStepTool(stepId) || state.steps[0];
   state.visited.add(step.id);
 
@@ -341,6 +359,9 @@ function renderStep(step) {
 function dpiaNeededNoticeHtml(tool) {
   if (tool !== "dpia0" && tool !== "dpia") return "";
   if (!state.results) return "";
+  // Only relevant when BIA screening was actually done (scope 'both'); a
+  // DPIA-only assessment means the user already decided one is needed.
+  if (state.assessment.scope !== "both") return "";
   const dn = state.results.dpia_needed;
   return `<div class="banner ${dn.result === "Yes" ? "yes" : "no"}">
     <strong>Is a full DPIA needed?</strong> ${dn.result}.
@@ -565,6 +586,15 @@ function renderProjectInfoStep(content) {
       <h2>Project/tool/application key information</h2>
       <p class="desc">Basic details about the project/tool/application being assessed.</p>
       <div class="field-row">
+        <div>
+          <label>Assessment scope</label>
+          <select id="scope-select">
+            ${Object.entries(SCOPE_LABELS).map(([value, label]) => `<option value="${value}" ${value === a.scope ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+          <div class="guidance">Changes which sections appear in this assessment. Answers for sections outside the selected scope are kept, not deleted, so you can switch back anytime.</div>
+        </div>
+      </div>
+      <div class="field-row">
         <div><label>Project/tool/application name</label><input data-f="project_name" type="text" value="${escapeHtml(a.project_name)}"></div>
         <div><label>Country/countries or business unit impacted</label><input data-f="countries" type="text" value="${escapeHtml(a.countries)}"></div>
       </div>
@@ -602,12 +632,44 @@ function renderProjectInfoStep(content) {
     el.addEventListener("input", save);
     el.addEventListener("change", save);
   });
+
+  document.getElementById("scope-select").addEventListener("change", async (e) => {
+    setSaveStatus("Saving...");
+    try {
+      const res = await Api.updateAssessment(state.assessment.id, { scope: e.target.value });
+      state.assessment = res.assessment;
+      toast("Scope updated.");
+      renderWizard(state.assessment.id, "project_info");
+    } catch (err) {
+      setSaveStatus("Save failed");
+      toast(err.message, true);
+    }
+  });
 }
 
 // ------------------------------------------------------------- results --
 
 function renderResultsStep(content) {
   const r = state.results;
+  const scope = state.assessment.scope;
+  const dn = r.dpia_needed;
+
+  let dpiaSection = "";
+  if (scope === "both") {
+    dpiaSection = `
+      ${dpiaNeededNoticeHtml("dpia")}
+      <p class="muted">Continue to the DPIA sections below to document processing details, even if a full DPIA isn't strictly required &mdash; it's good practice whenever personal data is involved.</p>
+    `;
+  } else if (scope === "bia") {
+    dpiaSection = `
+      <div class="banner ${dn.result === "Yes" ? "yes" : "no"}">
+        <strong>Is a full DPIA needed?</strong> ${dn.result}.
+        ${dn.reasons.length ? `<ul>${dn.reasons.map((reason) => `<li>${escapeHtml(reason)}</li>`).join("")}</ul>` : `<div class="muted">No screening trigger has been hit, based on your answers.</div>`}
+        ${dn.result === "Yes" ? `<div style="margin-top:10px"><button class="btn primary small" id="add-dpia-btn">Add DPIA to this assessment</button></div>` : ""}
+      </div>
+    `;
+  }
+
   content.innerHTML = `
     <div class="card">
       <h2>Protection level</h2>
@@ -626,29 +688,51 @@ function renderResultsStep(content) {
           .join("")}
       </div>
     </div>
-    <div class="card">
-      ${dpiaNeededNoticeHtml("dpia")}
-      <p class="muted">Continue to the DPIA sections below to document processing details, even if a full DPIA isn't strictly required &mdash; it's good practice whenever personal data is involved.</p>
-    </div>
+    <div class="card">${dpiaSection}</div>
   `;
+
+  const addDpiaBtn = document.getElementById("add-dpia-btn");
+  if (addDpiaBtn) {
+    addDpiaBtn.onclick = async () => {
+      try {
+        const res = await Api.updateAssessment(state.assessment.id, { scope: "both" });
+        state.assessment = res.assessment;
+        toast("DPIA added to this assessment.");
+        renderWizard(state.assessment.id, "bia_results");
+      } catch (e) {
+        toast(e.message, true);
+      }
+    };
+  }
 }
 
 // -------------------------------------------------------------- review --
 
+const PART_LABELS = { bia: "Business Impact Assessment (BIA)", dpia: "Data Privacy Impact Assessment (DPIA)" };
+
 function renderReviewStep(content) {
   const a = state.assessment;
-  const submitted = a.status === "submitted";
+  const parts = [];
+  if (a.scope === "bia" || a.scope === "both") parts.push({ key: "bia", status: a.bia_status });
+  if (a.scope === "dpia" || a.scope === "both") parts.push({ key: "dpia", status: a.dpia_status });
+
   content.innerHTML = `
     <div class="card">
       <h2>Review & submit</h2>
-      <p class="desc">Status: <span class="pill ${a.status}">${a.status}</span></p>
+      <p class="desc">Scope: <strong>${escapeHtml(SCOPE_LABELS[a.scope] || a.scope)}</strong></p>
       <p>Use the <a href="/api/assessments/${a.id}/print" target="_blank">full report view</a> to review every answer in the browser.</p>
-      <div style="display:flex;gap:10px;margin-top:16px">
-        ${submitted
-          ? `<button class="btn" id="reopen-btn">Reopen for editing</button>`
-          : `<button class="btn primary" id="submit-btn">Submit assessment</button>`}
-        <button class="btn danger" id="delete-btn">Delete this assessment</button>
-      </div>
+      ${parts
+        .map(
+          (p) => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 0;border-top:1px solid var(--border)">
+          <div>${PART_LABELS[p.key]} <span class="pill ${p.status === "submitted" ? "submitted" : "draft"}">${p.status}</span></div>
+          ${p.status === "submitted"
+            ? `<button class="btn" data-reopen="${p.key}">Reopen for editing</button>`
+            : `<button class="btn primary" data-submit="${p.key}">Submit ${p.key.toUpperCase()}</button>`}
+        </div>`
+        )
+        .join("")}
+      <div style="margin-top:16px"><button class="btn danger" id="delete-btn">Delete this assessment</button></div>
     </div>
     <div class="card">
       <h2>Export report</h2>
@@ -660,27 +744,30 @@ function renderReviewStep(content) {
       </div>
     </div>
   `;
-  const submitBtn = document.getElementById("submit-btn");
-  if (submitBtn) {
-    submitBtn.onclick = async () => {
+
+  content.querySelectorAll("[data-submit]").forEach((btn) => {
+    btn.onclick = async () => {
       try {
-        const res = await Api.submitAssessment(a.id);
+        const res = await Api.submitPart(a.id, btn.dataset.submit);
         state.assessment = res.assessment;
-        toast("Assessment submitted.");
+        toast(`${PART_LABELS[btn.dataset.submit]} submitted.`);
         renderReviewStep(content);
       } catch (e) {
         toast(e.message, true);
       }
     };
-  }
-  const reopenBtn = document.getElementById("reopen-btn");
-  if (reopenBtn) {
-    reopenBtn.onclick = async () => {
-      const res = await Api.reopenAssessment(a.id);
-      state.assessment = res.assessment;
-      renderReviewStep(content);
+  });
+  content.querySelectorAll("[data-reopen]").forEach((btn) => {
+    btn.onclick = async () => {
+      try {
+        const res = await Api.reopenPart(a.id, btn.dataset.reopen);
+        state.assessment = res.assessment;
+        renderReviewStep(content);
+      } catch (e) {
+        toast(e.message, true);
+      }
     };
-  }
+  });
   document.getElementById("delete-btn").onclick = async () => {
     if (!confirm("Delete this assessment permanently?")) return;
     await Api.deleteAssessment(a.id);

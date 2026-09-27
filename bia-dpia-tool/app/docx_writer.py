@@ -104,19 +104,21 @@ def build_docx(report) -> bytes:
 
     doc.add_table([["Field", "Value"]] + [[label, value or ""] for label, value in report["meta"]])
 
-    doc.add_heading("Protection level", level=2)
-    doc.add_table(
-        [["Aspect", "Maximum impact", "Classification", "Protection profile", "Service level", "Answered"]]
-        + [
-            [p["aspect"], p["max_label"], p["classification"], p["protection_profile"], p["service_level"], p["answered"]]
-            for p in report["protection"]
-        ]
-    )
+    if report["protection"]:
+        doc.add_heading("Protection level", level=2)
+        doc.add_table(
+            [["Aspect", "Maximum impact", "Classification", "Protection profile", "Service level", "Answered"]]
+            + [
+                [p["aspect"], p["max_label"], p["classification"], p["protection_profile"], p["service_level"], p["answered"]]
+                for p in report["protection"]
+            ]
+        )
 
-    doc.add_heading("Is a full DPIA needed?", level=2)
-    doc.add_paragraph(report["dpia_needed"]["result"], bold=True)
-    for reason in report["dpia_needed"]["reasons"]:
-        doc.add_paragraph(f"• {reason}")
+    if report["dpia_needed"] is not None:
+        doc.add_heading("Is a full DPIA needed?", level=2)
+        doc.add_paragraph(report["dpia_needed"]["result"], bold=True)
+        for reason in report["dpia_needed"]["reasons"]:
+            doc.add_paragraph(f"• {reason}")
 
     for section in report["sections"]:
         doc.add_heading(f"{section['tool_title']} — {section['section_title']}", level=2)
