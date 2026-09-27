@@ -5,6 +5,7 @@
 let config = null;
 let dirty = false;
 let activeTab = "settings";
+let currentAdmin = null;
 const appEl = document.getElementById("app");
 
 const INPUT_TYPES = ["text", "textarea", "number", "date", "yesno", "select", "multiselect", "impact"];
@@ -17,7 +18,9 @@ async function boot() {
     session = { authenticated: false };
   }
   if (!session.authenticated) return renderLogin();
+  currentAdmin = { name: session.name, email: session.email };
   document.getElementById("logout-btn").classList.remove("hidden");
+  document.getElementById("logout-btn").textContent = `Log out (${session.name})`;
   document.getElementById("logout-btn").onclick = async () => {
     await Api.adminLogout();
     location.reload();
@@ -32,25 +35,30 @@ function renderLogin() {
     <div class="admin-login card">
       <h2>Admin sign in</h2>
       <p class="muted">Sign in to edit questions, option lists, reference content and manage assessments.</p>
-      <label>Password</label>
-      <input type="password" id="login-password">
+      <label>Email</label>
+      <input type="email" id="login-email" autocomplete="username">
+      <div style="margin-top:10px"><label>Password</label>
+      <input type="password" id="login-password" autocomplete="current-password"></div>
       <div style="margin-top:14px"><button class="btn primary" id="login-btn">Sign in</button></div>
       <div id="login-error" class="muted" style="margin-top:10px;color:var(--danger)"></div>
     </div>
   `;
   const submit = async () => {
+    const email = document.getElementById("login-email").value.trim();
     const password = document.getElementById("login-password").value;
     try {
-      await Api.adminLogin(password);
+      await Api.adminLogin(email, password);
       boot();
     } catch (e) {
       document.getElementById("login-error").textContent = e.message;
     }
   };
   document.getElementById("login-btn").onclick = submit;
-  document.getElementById("login-password").addEventListener("keydown", (e) => {
-    if (e.key === "Enter") submit();
-  });
+  ["login-email", "login-password"].forEach((id) =>
+    document.getElementById(id).addEventListener("keydown", (e) => {
+      if (e.key === "Enter") submit();
+    })
+  );
 }
 
 const TABS = [
@@ -61,6 +69,8 @@ const TABS = [
   { id: "classification", label: "Classification Matrix" },
   { id: "assets", label: "Information Assets" },
   { id: "assessments", label: "Assessments" },
+  { id: "admins", label: "Admins" },
+  { id: "audit_log", label: "Audit Log" },
   { id: "advanced", label: "Advanced (JSON)" },
 ];
 
@@ -123,6 +133,8 @@ function renderTabPanel() {
     classification: renderClassificationTab,
     assets: renderAssetsTab,
     assessments: renderAssessmentsTab,
+    admins: renderAdminsTab,
+    audit_log: renderAuditLogTab,
     advanced: renderAdvancedTab,
   };
   renderers[activeTab](panel);
@@ -154,7 +166,8 @@ function renderSettingsTab(panel) {
       </div>
     </div>
     <div class="card">
-      <h2>Change admin password</h2>
+      <h2>Change your password</h2>
+      <p class="desc">Signed in as ${escapeHtml(currentAdmin.name)} (${escapeHtml(currentAdmin.email)}). To manage other admins, see the Admins tab.</p>
       <div class="field-row">
         <div><label>Current password</label><input id="pw-current" type="password"></div>
         <div><label>New password</label><input id="pw-new" type="password"></div>
@@ -166,6 +179,11 @@ function renderSettingsTab(panel) {
       <h2>Factory reset</h2>
       <p class="desc">Discards every customization and restores the original questions, option lists and reference tables extracted from the source workbook.</p>
       <button class="btn danger" id="reset-btn">Reset all content to factory defaults</button>
+    </div>
+    <div class="card">
+      <h2>Backup</h2>
+      <p class="desc">Downloads a complete, point-in-time-consistent copy of the database (config, admins, and every assessment) as a single file -- safe to run anytime, including while people are using the tool. For scheduled/automatic backups, see <code>backup.py</code> in the project folder.</p>
+      <a class="btn" href="/api/admin/backup">Download backup now</a>
     </div>
   `;
   const bind = (id, path, parse) => {
@@ -606,6 +624,150 @@ async function renderAssessmentsTab(panel) {
   };
   document.getElementById("status-filter").onchange = load;
   load();
+}
+
+// -------------------------------------------------------------- admins --
+
+async function renderAdminsTab(panel) {
+  panel.innerHTML = `
+    <div class="card">
+      <h2>Admin users</h2>
+      <p class="desc">Everyone listed here can sign in to this console with their own password and has full admin access.</p>
+      <table class="ref-table" id="admins-table">
+        <tr><th>Name</th><th>Email</th><th>Status</th><th>Last login</th><th></th></tr>
+      </table>
+    </div>
+    <div class="card">
+      <h2>Invite a new admin</h2>
+      <div class="field-row">
+        <div><label>Name</label><input id="new-admin-name" type="text"></div>
+        <div><label>Email</label><input id="new-admin-email" type="email"></div>
+        <div><label>Temporary password</label><input id="new-admin-password" type="text" placeholder="min. 8 characters"></div>
+      </div>
+      <div style="margin-top:10px"><button class="btn primary" id="create-admin-btn">Create admin</button></div>
+      <p class="muted" style="margin-top:8px">Share the temporary password with them directly (e.g. in person or a password manager) -- there is no email delivery built in. They should change it after first sign-in.</p>
+    </div>
+  `;
+  const table = document.getElementById("admins-table");
+  const draw = async () => {
+    const { users } = await Api.adminListUsers();
+    table.querySelectorAll("tr[data-row]").forEach((tr) => tr.remove());
+    users.forEach((u) => {
+      const tr = document.createElement("tr");
+      tr.dataset.row = u.id;
+      const isSelf = currentAdmin && u.email === currentAdmin.email;
+      tr.innerHTML = `
+        <td>${escapeHtml(u.name)}${isSelf ? " <span class=\"muted\">(you)</span>" : ""}</td>
+        <td>${escapeHtml(u.email)}</td>
+        <td>${u.active ? '<span class="pill submitted">active</span>' : '<span class="pill draft">deactivated</span>'}${u.is_default_password ? ' <span class="muted">(default password)</span>' : ""}</td>
+        <td>${u.last_login_at ? new Date(u.last_login_at).toLocaleString() : "Never"}</td>
+        <td>${isSelf ? "" : u.active
+          ? `<button class="btn small danger" data-deactivate="${u.id}">Deactivate</button>`
+          : `<button class="btn small" data-activate="${u.id}">Reactivate</button>`}</td>
+      `;
+      table.appendChild(tr);
+    });
+    table.querySelectorAll("[data-deactivate]").forEach((btn) => {
+      btn.onclick = async () => {
+        if (!confirm("Deactivate this admin? They will be signed out and unable to log in until reactivated.")) return;
+        try {
+          await Api.adminDeactivateUser(btn.dataset.deactivate);
+          draw();
+        } catch (e) {
+          toast(e.message, true);
+        }
+      };
+    });
+    table.querySelectorAll("[data-activate]").forEach((btn) => {
+      btn.onclick = async () => {
+        await Api.adminActivateUser(btn.dataset.activate);
+        draw();
+      };
+    });
+  };
+  draw();
+
+  document.getElementById("create-admin-btn").onclick = async () => {
+    const name = document.getElementById("new-admin-name").value.trim();
+    const email = document.getElementById("new-admin-email").value.trim();
+    const password = document.getElementById("new-admin-password").value;
+    try {
+      await Api.adminCreateUser(name, email, password);
+      toast("Admin created.");
+      document.getElementById("new-admin-name").value = "";
+      document.getElementById("new-admin-email").value = "";
+      document.getElementById("new-admin-password").value = "";
+      draw();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  };
+}
+
+// ------------------------------------------------------------ audit log --
+
+async function renderAuditLogTab(panel) {
+  panel.innerHTML = `
+    <div class="card">
+      <p class="desc">A record of security-relevant actions: sign-ins, admin/config changes, and assessment lifecycle events. Newest first.</p>
+      <div class="field-row">
+        <div><label>Filter by action</label>
+          <select id="audit-action-filter">
+            <option value="">All actions</option>
+            <option value="admin.login">admin.login</option>
+            <option value="admin.login_failed">admin.login_failed</option>
+            <option value="admin.password_changed">admin.password_changed</option>
+            <option value="admin.user.created">admin.user.created</option>
+            <option value="admin.user.deactivated">admin.user.deactivated</option>
+            <option value="admin.user.activated">admin.user.activated</option>
+            <option value="config.updated">config.updated</option>
+            <option value="config.reset">config.reset</option>
+            <option value="assessment.created">assessment.created</option>
+            <option value="assessment.submitted.bia">assessment.submitted.bia</option>
+            <option value="assessment.submitted.dpia">assessment.submitted.dpia</option>
+            <option value="assessment.deleted">assessment.deleted</option>
+          </select>
+        </div>
+      </div>
+      <table class="ref-table" id="audit-table" style="margin-top:12px">
+        <tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>IP</th><th>Details</th></tr>
+      </table>
+      <div style="margin-top:10px;display:flex;gap:10px">
+        <button class="btn small" id="audit-older-btn">Load older entries</button>
+      </div>
+    </div>
+  `;
+  let offset = 0;
+  const PAGE_SIZE = 50;
+  const table = document.getElementById("audit-table");
+
+  const loadPage = async (reset) => {
+    if (reset) {
+      offset = 0;
+      table.querySelectorAll("tr[data-row]").forEach((tr) => tr.remove());
+    }
+    const action = document.getElementById("audit-action-filter").value || undefined;
+    const { entries } = await Api.adminGetAuditLog({ limit: PAGE_SIZE, offset, action });
+    entries.forEach((e) => {
+      const tr = document.createElement("tr");
+      tr.dataset.row = e.id;
+      tr.innerHTML = `
+        <td>${new Date(e.created_at).toLocaleString()}</td>
+        <td>${escapeHtml(e.actor)}</td>
+        <td><code>${escapeHtml(e.action)}</code></td>
+        <td>${escapeHtml(e.target || "")}</td>
+        <td>${escapeHtml(e.ip || "")}</td>
+        <td>${escapeHtml(e.details || "")}</td>
+      `;
+      table.appendChild(tr);
+    });
+    offset += entries.length;
+    document.getElementById("audit-older-btn").style.display = entries.length < PAGE_SIZE ? "none" : "";
+  };
+
+  document.getElementById("audit-action-filter").onchange = () => loadPage(true);
+  document.getElementById("audit-older-btn").onclick = () => loadPage(false);
+  loadPage(true);
 }
 
 // ------------------------------------------------------------- advanced --

@@ -26,7 +26,7 @@ const Api = (() => {
     reopenPart: (id, part) => req("POST", `/api/assessments/${id}/reopen/${part}`),
     deleteAssessment: (id) => req("DELETE", `/api/assessments/${id}`),
 
-    adminLogin: (password) => req("POST", "/api/admin/login", { password }),
+    adminLogin: (email, password) => req("POST", "/api/admin/login", { email, password }),
     adminLogout: () => req("POST", "/api/admin/logout"),
     adminSession: () => req("GET", "/api/admin/session"),
     adminGetConfig: () => req("GET", "/api/admin/config"),
@@ -37,6 +37,18 @@ const Api = (() => {
     adminListAssessments: (status) => req("GET", `/api/admin/assessments${status ? `?status=${status}` : ""}`),
     adminGetAssessment: (id) => req("GET", `/api/admin/assessments/${id}`),
     adminDeleteAssessment: (id) => req("DELETE", `/api/admin/assessments/${id}`),
+
+    adminListUsers: () => req("GET", "/api/admin/users"),
+    adminCreateUser: (name, email, password) => req("POST", "/api/admin/users", { name, email, password }),
+    adminDeactivateUser: (id) => req("POST", `/api/admin/users/${id}/deactivate`),
+    adminActivateUser: (id) => req("POST", `/api/admin/users/${id}/activate`),
+    adminGetAuditLog: (opts = {}) => {
+      const qs = new URLSearchParams();
+      if (opts.limit) qs.set("limit", opts.limit);
+      if (opts.offset) qs.set("offset", opts.offset);
+      if (opts.action) qs.set("action", opts.action);
+      return req("GET", `/api/admin/audit-log?${qs.toString()}`);
+    },
   };
 })();
 

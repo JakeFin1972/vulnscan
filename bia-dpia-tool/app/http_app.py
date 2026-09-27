@@ -9,6 +9,7 @@ import mimetypes
 import os
 import re
 import socketserver
+import time
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -21,6 +22,7 @@ from .pdf_writer import build_pdf
 STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "static")
 
 ADMIN_COOKIE = "bia_admin_token"
+_SERVING_HTTPS = False  # flipped on by serve() when --cert/--key are given
 
 REQUIRED_CONFIG_KEYS = {
     "org_name", "settings", "option_lists", "tools",
@@ -79,9 +81,16 @@ def assessment_payload(assessment_id):
 
 
 def require_admin(handler):
+    """Returns the authenticated admin_users row, or raises 401."""
     token = handler.get_cookie(ADMIN_COOKIE)
-    if not db.session_valid(token):
+    admin = db.get_session_admin(token)
+    if admin is None:
         raise ApiError(401, "Admin authentication required.")
+    return admin
+
+
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = 15 * 60
+LOGIN_RATE_LIMIT_MAX_ATTEMPTS = 8
 
 
 # --------------------------------------------------------------- routes ---
@@ -126,6 +135,8 @@ def create_assessment(h, m, body):
     if scope not in db.VALID_SCOPES:
         raise ApiError(400, f"scope must be one of {db.VALID_SCOPES}.")
     aid = db.create_assessment({**body, "scope": scope})
+    actor = body.get("completed_by_email") or body.get("completed_by") or "anonymous"
+    db.log_audit(actor, "assessment.created", target=str(aid), ip=h.client_ip(), details=body.get("project_name"))
     return 201, assessment_payload(aid)
 
 
@@ -172,8 +183,11 @@ def submit_part(h, m, body):
     assessment = db.get_assessment(aid)
     if assessment is None:
         raise ApiError(404, "Assessment not found.")
-    _require_part_in_scope(assessment, m.group("part"))
-    db.set_part_status(aid, m.group("part"), "submitted")
+    part = m.group("part")
+    _require_part_in_scope(assessment, part)
+    db.set_part_status(aid, part, "submitted")
+    actor = assessment.get("completed_by_email") or assessment.get("completed_by") or "anonymous"
+    db.log_audit(actor, f"assessment.submitted.{part}", target=str(aid), ip=h.client_ip())
     return 200, assessment_payload(aid)
 
 
@@ -192,9 +206,12 @@ def reopen_part(h, m, body):
 def delete_assessment_public(h, m, body):
     # Anyone can delete their own draft from the wizard (e.g. "discard").
     aid = int(m.group("id"))
-    if db.get_assessment(aid) is None:
+    assessment = db.get_assessment(aid)
+    if assessment is None:
         raise ApiError(404, "Assessment not found.")
     db.delete_assessment(aid)
+    actor = assessment.get("completed_by_email") or assessment.get("completed_by") or "anonymous"
+    db.log_audit(actor, "assessment.deleted", target=str(aid), ip=h.client_ip(), details=assessment.get("project_name"))
     return 200, {"ok": True}
 
 
@@ -202,12 +219,22 @@ def delete_assessment_public(h, m, body):
 
 @route("POST", r"/api/admin/login")
 def admin_login(h, m, body):
+    ip = h.client_ip()
+    if db.count_recent_failed_logins(ip, LOGIN_RATE_LIMIT_WINDOW_SECONDS) >= LOGIN_RATE_LIMIT_MAX_ATTEMPTS:
+        raise ApiError(429, "Too many failed login attempts from this address. Try again later.")
+
+    email = ((body or {}).get("email") or "").strip()
     password = (body or {}).get("password", "")
-    if not db.verify_admin_password(password):
-        raise ApiError(401, "Incorrect password.")
-    token = db.create_session()
+    admin = db.authenticate_admin(email, password) if email else None
+    if admin is None or not admin["active"]:
+        db.log_audit(email or "(no email)", "admin.login_failed", ip=ip)
+        raise ApiError(401, "Incorrect email or password.")
+
+    token = db.create_session(admin["id"])
+    db.touch_admin_login(admin["id"])
+    db.log_audit(admin["email"], "admin.login", ip=ip)
     h.set_cookie(ADMIN_COOKIE, token)
-    return 200, {"ok": True, "default_password": db.is_default_admin_password()}
+    return 200, {"ok": True, "name": admin["name"], "email": admin["email"], "default_password": bool(admin["is_default_password"])}
 
 
 @route("POST", r"/api/admin/logout")
@@ -221,12 +248,90 @@ def admin_logout(h, m, body):
 
 @route("GET", r"/api/admin/session")
 def admin_session(h, m, body):
-    token = h.get_cookie(ADMIN_COOKIE)
-    authenticated = db.session_valid(token)
+    admin = db.get_session_admin(h.get_cookie(ADMIN_COOKIE))
+    if admin is None:
+        return 200, {"authenticated": False}
     return 200, {
-        "authenticated": authenticated,
-        "default_password": db.is_default_admin_password() if authenticated else None,
+        "authenticated": True,
+        "name": admin["name"],
+        "email": admin["email"],
+        "default_password": bool(admin["is_default_password"]),
     }
+
+
+@route("GET", r"/api/admin/users")
+def admin_list_users(h, m, body):
+    require_admin(h)
+    return 200, {"users": db.list_admin_users()}
+
+
+@route("POST", r"/api/admin/users")
+def admin_create_user(h, m, body):
+    actor = require_admin(h)
+    body = body or {}
+    name = (body.get("name") or "").strip()
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    if not name or not email:
+        raise ApiError(400, "Name and email are required.")
+    if len(password) < 8:
+        raise ApiError(400, "Password must be at least 8 characters.")
+    try:
+        new_id = db.create_admin_user(name, email, password)
+    except ValueError as e:
+        raise ApiError(400, str(e))
+    db.log_audit(actor["email"], "admin.user.created", target=email, ip=h.client_ip())
+    return 201, {"users": db.list_admin_users(), "id": new_id}
+
+
+@route("POST", r"/api/admin/users/(?P<id>\d+)/deactivate")
+def admin_deactivate_user(h, m, body):
+    actor = require_admin(h)
+    target_id = int(m.group("id"))
+    if target_id == actor["id"]:
+        raise ApiError(400, "You can't deactivate your own account.")
+    if db.count_active_admins() <= 1:
+        raise ApiError(400, "Can't deactivate the last remaining admin.")
+    target = db.get_admin_user(target_id)
+    if target is None:
+        raise ApiError(404, "Admin user not found.")
+    db.set_admin_active(target_id, False)
+    db.log_audit(actor["email"], "admin.user.deactivated", target=target["email"], ip=h.client_ip())
+    return 200, {"users": db.list_admin_users()}
+
+
+@route("POST", r"/api/admin/users/(?P<id>\d+)/activate")
+def admin_activate_user(h, m, body):
+    actor = require_admin(h)
+    target_id = int(m.group("id"))
+    target = db.get_admin_user(target_id)
+    if target is None:
+        raise ApiError(404, "Admin user not found.")
+    db.set_admin_active(target_id, True)
+    db.log_audit(actor["email"], "admin.user.activated", target=target["email"], ip=h.client_ip())
+    return 200, {"users": db.list_admin_users()}
+
+
+@route("GET", r"/api/admin/backup")
+def admin_download_backup(h, m, body):
+    actor = require_admin(h)
+    try:
+        data = db.create_backup_bytes()
+    except FileNotFoundError as e:
+        raise ApiError(404, str(e))
+    db.log_audit(actor["email"], "admin.backup.downloaded", ip=h.client_ip())
+    filename = f"bia_dpia-backup-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}.sqlite3"
+    return 200, ("application/x-sqlite3", data, filename)
+
+
+@route("GET", r"/api/admin/audit-log")
+def admin_get_audit_log(h, m, body):
+    require_admin(h)
+    qs = parse_qs(urlparse(h.path).query)
+    limit = min(int((qs.get("limit") or [100])[0]), 500)
+    offset = int((qs.get("offset") or [0])[0])
+    action = (qs.get("action") or [None])[0]
+    return 200, {"entries": db.list_audit_log(limit=limit, offset=offset, action=action)}
 
 
 @route("GET", r"/api/admin/config")
@@ -237,28 +342,32 @@ def admin_get_config(h, m, body):
 
 @route("PUT", r"/api/admin/config")
 def admin_put_config(h, m, body):
-    require_admin(h)
+    actor = require_admin(h)
     validate_config(body)
     db.save_config(body)
+    db.log_audit(actor["email"], "config.updated", ip=h.client_ip())
     return 200, db.get_config()
 
 
 @route("POST", r"/api/admin/config/reset")
 def admin_reset_config(h, m, body):
-    require_admin(h)
-    return 200, db.reset_config()
+    actor = require_admin(h)
+    fresh = db.reset_config()
+    db.log_audit(actor["email"], "config.reset", ip=h.client_ip())
+    return 200, fresh
 
 
 @route("PUT", r"/api/admin/password")
 def admin_change_password(h, m, body):
-    require_admin(h)
+    actor = require_admin(h)
     current = (body or {}).get("current_password", "")
     new = (body or {}).get("new_password", "")
-    if not db.verify_admin_password(current):
+    if db.authenticate_admin(actor["email"], current) is None:
         raise ApiError(401, "Current password is incorrect.")
     if not new or len(new) < 8:
         raise ApiError(400, "New password must be at least 8 characters.")
-    db.set_admin_password(new)
+    db.set_admin_password(actor["id"], new)
+    db.log_audit(actor["email"], "admin.password_changed", ip=h.client_ip())
     return 200, {"ok": True}
 
 
@@ -278,11 +387,13 @@ def admin_get_assessment(h, m, body):
 
 @route("DELETE", r"/api/admin/assessments/(?P<id>\d+)")
 def admin_delete_assessment(h, m, body):
-    require_admin(h)
+    actor = require_admin(h)
     aid = int(m.group("id"))
-    if db.get_assessment(aid) is None:
+    assessment = db.get_assessment(aid)
+    if assessment is None:
         raise ApiError(404, "Assessment not found.")
     db.delete_assessment(aid)
+    db.log_audit(actor["email"], "assessment.deleted", target=str(aid), ip=h.client_ip(), details=assessment.get("project_name"))
     return 200, {"ok": True}
 
 
@@ -394,15 +505,27 @@ class Handler(BaseHTTPRequestHandler):
         return morsel.value if morsel else None
 
     def set_cookie(self, name, value):
-        self._set_cookie_header = f"{name}={value}; Path=/; HttpOnly; SameSite=Lax"
+        secure = "; Secure" if _SERVING_HTTPS else ""
+        self._set_cookie_header = f"{name}={value}; Path=/; HttpOnly; SameSite=Strict{secure}"
 
     def clear_cookie(self, name):
-        self._set_cookie_header = f"{name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0"
+        secure = "; Secure" if _SERVING_HTTPS else ""
+        self._set_cookie_header = f"{name}=; Path=/; HttpOnly; SameSite=Strict{secure}; Max-Age=0"
+
+    def client_ip(self):
+        # Trust X-Forwarded-For only if you actually sit behind a reverse
+        # proxy that sets it; otherwise this is spoofable by the client.
+        # We use the raw socket peer address instead for that reason.
+        return self.client_address[0]
+
+    MAX_BODY_BYTES = 5 * 1024 * 1024  # 5 MB -- generous for a JSON payload, caps memory use
 
     def _read_body(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length == 0:
             return None
+        if length > self.MAX_BODY_BYTES:
+            raise ApiError(413, "Request body too large.")
         raw = self.rfile.read(length)
         if not raw:
             return None
@@ -501,13 +624,33 @@ class Server(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def serve(host="127.0.0.1", port=8000):
+def serve(host="127.0.0.1", port=8000, certfile=None, keyfile=None):
+    global _SERVING_HTTPS
     db.init_db()
     httpd = Server((host, port), Handler)
-    print(f"BIA/DPIA tool serving on http://{host}:{port}")
-    print(f"Admin console: http://{host}:{port}/admin.html")
-    if db.is_default_admin_password():
-        print(f"Default admin password is '{db.DEFAULT_ADMIN_PASSWORD}' -- change it in the Admin console immediately.")
+    scheme = "http"
+    # If a reverse proxy terminates TLS in front of this process (the
+    # recommended setup -- see server.py's --cert/--key help text), this
+    # process only ever sees plain HTTP itself. Set this env var in that
+    # case so the session cookie still gets the Secure attribute; it's a
+    # server-side opt-in, not a client-supplied header, so it can't be
+    # spoofed by a request.
+    if certfile or os.environ.get("BIA_DPIA_FORCE_SECURE_COOKIE") == "1":
+        _SERVING_HTTPS = True
+    if certfile:
+        import ssl
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile=certfile, keyfile=keyfile)
+        httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
+        scheme = "https"
+    print(f"BIA/DPIA tool serving on {scheme}://{host}:{port}")
+    print(f"Admin console: {scheme}://{host}:{port}/admin.html")
+    if db.any_default_password_admin_exists():
+        print(
+            f"Default admin login is '{db.DEFAULT_ADMIN_EMAIL}' / '{db.DEFAULT_ADMIN_PASSWORD}' "
+            "-- change it in the Admin console immediately."
+        )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

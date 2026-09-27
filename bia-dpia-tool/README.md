@@ -54,22 +54,36 @@ to change the location, e.g. to put it on persistent storage in a container.
 
 ### Admin access
 
-The default admin password is **`ChangeMe!123`** (also printed to the
-console on startup). **Change it immediately** from the Admin console's
-Settings tab -- the console shows a warning banner until you do. You can
-also set a different starting password before first run via the
-`BIA_DPIA_ADMIN_PASSWORD` environment variable.
+The first admin account is **`admin@localhost`** / **`ChangeMe!123`** (also
+printed to the console on startup). **Change the password immediately**
+from the Admin console's Settings tab -- the console shows a warning banner
+until you do. You can also set a different starting email/password before
+first run via the `BIA_DPIA_ADMIN_EMAIL` / `BIA_DPIA_ADMIN_PASSWORD`
+environment variables.
 
-There is a single shared admin password (no per-user admin accounts) --
-appropriate for a small internal tool. Anyone filling in an assessment does
+Admin accounts are individual, not a single shared password -- see
+[Security & operations](#security--operations) below for adding more admins,
+the audit log, and login rate limiting. Anyone filling in an assessment does
 not need to log in; they just identify themselves via name/email on the
 project/tool/application info step (used for "My assessments" lookup and as
 the report's "Completed by" field).
 
-> Deployment note: this app has no TLS/session-hardening beyond
-> HttpOnly/SameSite cookies and does not attempt to be internet-facing
-> hardened. Run it behind your normal internal network controls (VPN,
-> reverse proxy with TLS, etc.) if it isn't staying on localhost.
+## Testing
+
+```bash
+pip install pytest    # the only dependency needed to run the test suite
+cd bia-dpia-tool
+python -m pytest -q
+```
+
+55 tests: pure unit tests for the scoring engine (`tests/test_scoring.py`)
+and the report-flattening logic (`tests/test_report.py`), database-level
+tests including the legacy-admin migration path (`tests/test_db.py`), and
+integration tests that spin up a real instance of the server on a free
+localhost port and exercise it over HTTP (`tests/test_http_app.py`). CI
+(`.github/workflows/ci.yml`, job `bia-dpia-tool-tests`) runs the same suite
+on every push/PR. Pytest is a test-time-only dependency -- the tool itself
+still needs nothing beyond the Python 3 standard library to run.
 
 ## How it works
 
@@ -97,13 +111,17 @@ the report's "Completed by" field).
   Review & submit step you can download the same content as a **Word
   (.docx)**, **PDF**, or **CSV** file
   (`/api/assessments/{id}/export.{docx,pdf,csv}`).
-- **Admin console** (`/admin.html`): password-gated. Tabs for Settings
-  (org name, DPIA thresholds, risk buckets, admin password, factory
-  reset), Questions & Sections (add/edit/remove questions per tool),
-  Option Lists, the Impact Scale reference table, the Classification
-  Matrix, the Information Assets register, a list of all submitted/draft
-  Assessments (with a delete action), and an Advanced raw-JSON editor.
-  Nothing is saved until you click **Save changes**.
+- **Admin console** (`/admin.html`): sign-in gated, with individual admin
+  accounts. Tabs for Settings (org name, DPIA thresholds, risk buckets, your
+  own password, backup download, factory reset), Questions & Sections
+  (add/edit/remove questions per tool), Option Lists, the Impact Scale
+  reference table, the Classification Matrix, the Information Assets
+  register, a list of all submitted/draft Assessments (with a delete
+  action), Admins (invite/deactivate/reactivate other admin accounts),
+  Audit Log (a read-only record of security-relevant actions), and an
+  Advanced raw-JSON editor. Nothing on the config-editing tabs is saved
+  until you click **Save changes**; account/password/backup actions take
+  effect immediately.
 - **Backend**: `app/seed_data.py` holds the initial content (loaded into
   SQLite on first run only); `app/db.py` is the persistence layer;
   `app/scoring.py` reproduces the workbook's formulas; `app/http_app.py` is
@@ -145,12 +163,53 @@ handful of stable field "roles" documented in `app/scoring.py`
 `art35_criterion`), which only need to point at *some* question with that
 role, not a specific hard-coded key.
 
+## Security & operations
+
+- **Individual admin accounts.** Each admin signs in with their own email
+  and password (Admins tab to invite/deactivate others); deactivating an
+  account immediately kills any of its live sessions too. There's no
+  self-service password reset or email delivery -- a currently-signed-in
+  admin sets a temporary password when creating a new admin and shares it
+  directly.
+- **Audit log** (Audit Log tab / `GET /api/admin/audit-log`): records
+  sign-ins and failures, password changes, admin account changes, config
+  changes/resets, and assessment lifecycle events (created, BIA/DPIA
+  submitted, deleted) with actor, timestamp, IP and target. It's
+  append-only from the UI (no edit/delete exposed).
+- **Login rate limiting.** After 8 failed logins from the same IP within 15
+  minutes, further attempts (even with the correct password) are rejected
+  with 429 until the window rolls off. This is in-process and IP-based --
+  fine for a single small deployment, not a substitute for a WAF if you're
+  internet-facing.
+- **Backups.** `bia-dpia-tool/backup.py` writes a point-in-time-consistent
+  copy of the whole database (uses SQLite's online backup API, so it's safe
+  to run while the server is live) into `backups/`, retaining the most
+  recent N (default 14). Schedule it with cron or Task Scheduler -- see the
+  script's docstring. The Admin console's Settings tab also has a
+  **Download backup now** button for an on-demand copy.
+- **HTTPS.** The recommended setup is a reverse proxy (nginx, Caddy, your
+  cloud load balancer) terminating TLS in front of this process, which is
+  what most environments already have and handles certificate renewal for
+  you; set `BIA_DPIA_FORCE_SECURE_COOKIE=1` in that case so the session
+  cookie still gets the `Secure` attribute (this process itself only sees
+  plain HTTP from the proxy, so it can't infer that on its own). Where no
+  reverse proxy is available, `python3 server.py --cert cert.pem --key
+  key.pem` terminates TLS directly using only the standard library's `ssl`
+  module.
+- **Other hardening already in place:** PBKDF2-hashed passwords (200,000
+  iterations, unique salt per account); session cookies are `HttpOnly`,
+  `SameSite=Strict`, and tied to a specific admin account (revoked
+  immediately if that account is deactivated); request bodies are capped at
+  5&nbsp;MB to bound memory use from a malicious `Content-Length`.
+
 ## Not implemented (out of scope for this pass)
 
 - File attachments (the source workbook references attaching data-flow
   diagrams etc.; this tool captures a comment/reference instead).
-- Per-user accounts/SSO (a single shared admin password gates the admin
-  console; anyone can start/edit their own assessments without logging in).
+- SSO (SAML/OIDC). Individual admin accounts exist (see above), but they're
+  local accounts, not tied to an external identity provider.
+- Self-service password reset for admins, and any login/accounts for the
+  people filling in assessments (by design -- see "Admin access" above).
 
 ## Export format notes
 
