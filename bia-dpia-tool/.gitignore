@@ -1,0 +1,6 @@
+data/*.sqlite3
+data/*.sqlite3-journal
+__pycache__/
+*.pyc
+backups/
+.pytest_cache/

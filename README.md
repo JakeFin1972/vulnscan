@@ -156,6 +156,16 @@ generic backend parity, and API endpoints.
 
 ---
 
+## Other tools in this repo
+
+`bia-dpia-tool/` is a separate, self-contained web tool for running
+Business Impact Assessments and Data Privacy Impact Assessments -- unrelated
+to the vulnerability scanner above, but shipped from the same repository.
+See `bia-dpia-tool/README.md` for details; run it with
+`cd bia-dpia-tool && python3 server.py` (no dependencies beyond Python 3).
+
+---
+
 ## Provenance
 
 Clean-room design inspired by the public method Capital One described in their
