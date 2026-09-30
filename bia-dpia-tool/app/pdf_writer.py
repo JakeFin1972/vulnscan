@@ -15,6 +15,17 @@ PAGE_WIDTH = 612  # US Letter, points
 PAGE_HEIGHT = 792
 MARGIN = 54
 CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN
+FOOTER_HEIGHT = 26  # reserved band at the bottom of every page
+
+# A restrained, print-friendly palette (0-1 RGB floats for the PDF `rg`/`RG`
+# color operators). Navy on white and white on navy both clear the WCAG AA
+# 4.5:1 contrast threshold for text.
+BLACK = (0.13, 0.13, 0.13)
+NAVY = (0.122, 0.220, 0.392)
+ACCENT = (0.184, 0.435, 0.620)
+MUTED = (0.35, 0.38, 0.42)
+BORDER = (0.72, 0.75, 0.78)
+ZEBRA = (0.95, 0.96, 0.97)
 
 
 def _esc(text: str) -> str:
@@ -25,9 +36,13 @@ class SimplePDF:
     def __init__(self):
         self.pages = [[]]
         self.y = PAGE_HEIGHT - MARGIN
+        # MARGIN already reserves room above FOOTER_HEIGHT; the usable floor
+        # for content is a bit higher than MARGIN so text never collides
+        # with the per-page footer drawn later at render() time.
+        self.content_floor = MARGIN + FOOTER_HEIGHT
 
     def _ensure_space(self, height):
-        if self.y - height < MARGIN:
+        if self.y - height < self.content_floor:
             self.pages.append([])
             self.y = PAGE_HEIGHT - MARGIN
 
@@ -40,36 +55,92 @@ class SimplePDF:
             lines.extend(wrapped or [""])
         return lines
 
-    def _text_op(self, font, size, x, y, text):
+    def _text_op(self, font, size, x, y, text, color=BLACK):
         encoded = _esc(text).encode("cp1252", errors="replace").decode("latin-1")
-        return f"BT /{font} {size} Tf 1 0 0 1 {x:.1f} {y:.1f} Tm ({encoded}) Tj ET"
+        r, g, b = color
+        return f"{r:.3f} {g:.3f} {b:.3f} rg BT /{font} {size} Tf 1 0 0 1 {x:.1f} {y:.1f} Tm ({encoded}) Tj ET"
 
     def add_heading(self, text, level=1):
-        size = {1: 18, 2: 14, 3: 12}.get(level, 12)
-        self._ensure_space(size + 12)
+        size = {1: 20, 2: 14, 3: 11.5}.get(level, 12)
+        color = {1: NAVY, 2: NAVY, 3: ACCENT}.get(level, NAVY)
+        self._ensure_space(size + 16)
         self.y -= size
-        self.pages[-1].append(self._text_op("F2", size, MARGIN, self.y, text))
-        self.y -= 8
+        self.pages[-1].append(self._text_op("F2", size, MARGIN, self.y, text, color))
+        if level == 1:
+            self.y -= 6
+            self.add_rule(color=NAVY, weight=1.6)
+        elif level == 2:
+            self.y -= 4
+            self.add_rule(color=BORDER, weight=0.8)
+        else:
+            self.y -= 6
 
-    def add_paragraph(self, text, size=9, bold=False, indent=0, space_after=4):
+    def add_subtitle(self, text, size=9.5, color=MUTED):
+        self._ensure_space(size + 6)
+        self.y -= size
+        self.pages[-1].append(self._text_op("F1", size, MARGIN, self.y, text, color))
+        self.y -= 10
+
+    def add_paragraph(self, text, size=9.5, bold=False, indent=0, color=BLACK, space_after=4):
         font = "F2" if bold else "F1"
-        line_height = size * 1.35
+        line_height = size * 1.4
         for line in self._wrap(text, size, bold, indent):
             self._ensure_space(line_height)
             self.y -= line_height
-            self.pages[-1].append(self._text_op(font, size, MARGIN + indent, self.y, line))
+            self.pages[-1].append(self._text_op(font, size, MARGIN + indent, self.y, line, color))
         self.y -= space_after
+
+    def add_kv_row(self, label, value, label_width=155, size=9.5):
+        """Two-column label/value row (bold navy label, plain value) used for
+        the report's metadata block, instead of a single "Label: value"
+        run-on line -- lines up into a scannable column like a form."""
+        value = value or ""
+        line_height = size * 1.4
+        value_lines = self._wrap(value, size, False, label_width) or [""]
+        self._ensure_space(line_height)
+        self.y -= line_height
+        self.pages[-1].append(self._text_op("F2", size, MARGIN, self.y, label, NAVY))
+        self.pages[-1].append(self._text_op("F1", size, MARGIN + label_width, self.y, value_lines[0], BLACK))
+        for extra in value_lines[1:]:
+            self._ensure_space(line_height)
+            self.y -= line_height
+            self.pages[-1].append(self._text_op("F1", size, MARGIN + label_width, self.y, extra, BLACK))
+        self.y -= 2
 
     def add_spacer(self, height=6):
         self._ensure_space(height)
         self.y -= height
 
-    def add_rule(self):
+    def add_rule(self, color=BORDER, weight=0.75):
         self._ensure_space(6)
-        self.pages[-1].append(f"{MARGIN} {self.y:.1f} m {PAGE_WIDTH - MARGIN} {self.y:.1f} l S")
+        r, g, b = color
+        self.pages[-1].append(
+            f"{r:.3f} {g:.3f} {b:.3f} RG {weight} w {MARGIN} {self.y:.1f} m {PAGE_WIDTH - MARGIN} {self.y:.1f} l S"
+        )
         self.y -= 8
 
-    def render(self) -> bytes:
+    def add_fill_rect(self, x, y, w, h, color):
+        r, g, b = color
+        self.pages[-1].append(f"{r:.3f} {g:.3f} {b:.3f} rg {x:.1f} {y:.1f} {w:.1f} {h:.1f} re f")
+
+    def _add_footers(self, title):
+        """Adds a "title -- Page X of Y" footer to every page, drawn last
+        (after all content flowed) since the total page count is only known
+        once the whole report has been laid out."""
+        n_pages = len(self.pages)
+        rule_y = MARGIN
+        text_y = MARGIN - 16
+        r, g, b = BORDER
+        for i, page in enumerate(self.pages):
+            page.append(f"{r:.3f} {g:.3f} {b:.3f} RG 0.75 w {MARGIN} {rule_y:.1f} m {PAGE_WIDTH - MARGIN} {rule_y:.1f} l S")
+            if title:
+                page.append(self._text_op("F1", 8, MARGIN, text_y, title, MUTED))
+            page_text = f"Page {i + 1} of {n_pages}"
+            est_width = len(page_text) * (8 * 0.52)
+            page.append(self._text_op("F1", 8, PAGE_WIDTH - MARGIN - est_width, text_y, page_text, MUTED))
+
+    def render(self, footer_title="") -> bytes:
+        self._add_footers(footer_title)
         n_pages = len(self.pages)
         font1_id, font2_id = 3, 4
         page_ids = list(range(5, 5 + n_pages * 2, 2))
@@ -122,9 +193,13 @@ class SimplePDF:
 def build_pdf(report) -> bytes:
     pdf = SimplePDF()
     pdf.add_heading("Business Impact Assessment & DPIA Report", level=1)
+    subtitle = " · ".join(p for p in [report.get("org_name"), f"Generated {report.get('generated_at')}"] if p)
+    if subtitle:
+        pdf.add_subtitle(subtitle)
+    pdf.add_spacer(4)
     for label, value in report["meta"]:
-        pdf.add_paragraph(f"{label}: {value or ''}", size=9)
-    pdf.add_spacer(8)
+        pdf.add_kv_row(label, value)
+    pdf.add_spacer(10)
 
     if report["protection"]:
         pdf.add_heading("Protection level", level=2)
@@ -132,26 +207,27 @@ def build_pdf(report) -> bytes:
             line = f"{p['aspect']}: {p['max_label']}"
             if p["classification"]:
                 line += f" — {p['classification']} (protection profile: {p['protection_profile']}, service level: {p['service_level']})"
-            pdf.add_paragraph(line, size=9)
+            pdf.add_paragraph(line, size=9.5)
         pdf.add_spacer(8)
 
     if report["dpia_needed"] is not None:
         pdf.add_heading("Is a full DPIA needed?", level=2)
-        pdf.add_paragraph(report["dpia_needed"]["result"], size=10, bold=True)
+        pdf.add_paragraph(report["dpia_needed"]["result"], size=11, bold=True, color=ACCENT)
         for reason in report["dpia_needed"]["reasons"]:
-            pdf.add_paragraph(f"- {reason}", size=9, indent=10)
+            pdf.add_paragraph(f"- {reason}", size=9.5, indent=10)
         pdf.add_spacer(8)
 
     for section in report["sections"]:
         pdf.add_heading(f"{section['tool_title']} — {section['section_title']}", level=3)
         for row in section["rows"]:
             label = f"{row['id']} {row['prompt']}".strip()
-            pdf.add_paragraph(label, size=9, bold=True, space_after=1)
-            pdf.add_paragraph(row["answer"] or "(Not answered)", size=9, indent=10, space_after=1)
+            pdf.add_paragraph(label, size=9.5, bold=True, color=NAVY, space_after=1)
+            pdf.add_paragraph(row["answer"] or "(Not answered)", size=9.5, indent=10, space_after=1)
             if row["comment"]:
-                pdf.add_paragraph(f"Comment: {row['comment']}", size=8, indent=10, space_after=1)
+                pdf.add_paragraph(f"Comment: {row['comment']}", size=8.5, indent=10, color=MUTED, space_after=1)
             for risk_label, risk_value in row["risk"]:
-                pdf.add_paragraph(f"{risk_label}: {risk_value}", size=8, indent=10, space_after=1)
-            pdf.add_spacer(6)
+                pdf.add_paragraph(f"{risk_label}: {risk_value}", size=8.5, indent=10, color=MUTED, space_after=1)
+            pdf.add_spacer(4)
+            pdf.add_rule(color=BORDER, weight=0.5)
 
-    return pdf.render()
+    return pdf.render(footer_title=report.get("project_name") or "BIA/DPIA Report")

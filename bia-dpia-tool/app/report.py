@@ -60,6 +60,8 @@ SCOPE_TOOLS = {"bia": ["bia"], "dpia": ["dpia0", "dpia"], "both": ["bia", "dpia0
 
 
 def build_report(config, assessment, answers, results):
+    import datetime
+
     a = assessment
     scope = a.get("scope", "both")
     include_bia = scope in ("bia", "both")
@@ -120,7 +122,16 @@ def build_report(config, assessment, answers, results):
                 )
             sections.append({"tool_title": tool["title"], "section_title": section["title"], "rows": rows})
 
-    return {"scope": scope, "meta": meta, "protection": protection, "dpia_needed": dpia_needed, "sections": sections}
+    return {
+        "scope": scope,
+        "org_name": config.get("org_name") or "",
+        "project_name": a.get("project_name") or "",
+        "generated_at": datetime.datetime.now().strftime("%d %b %Y, %H:%M"),
+        "meta": meta,
+        "protection": protection,
+        "dpia_needed": dpia_needed,
+        "sections": sections,
+    }
 
 
 def report_filename(assessment, ext):

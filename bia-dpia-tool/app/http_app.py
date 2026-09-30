@@ -402,32 +402,50 @@ def admin_delete_assessment(h, m, body):
 def _html_report(report):
     parts = [
         "<html><head><meta charset='utf-8'><title>BIA / DPIA Report</title>",
-        "<style>body{font-family:Arial,sans-serif;margin:2em;color:#1a1a1a}",
-        "h1{font-size:1.5em}h2{margin-top:2em;border-bottom:2px solid #333}",
-        "h3{margin-top:1.5em;color:#333}table{border-collapse:collapse;width:100%;margin:0.5em 0}",
-        "td,th{border:1px solid #ccc;padding:6px 8px;text-align:left;vertical-align:top;font-size:0.92em}",
-        "th{background:#f0f0f0}.muted{color:#666;font-size:0.9em}",
-        ".badge{display:inline-block;padding:2px 10px;border-radius:10px;background:#eee;font-weight:bold}",
+        "<style>",
+        ":root{--navy:#1f3864;--accent:#2f6f9f;--text:#222;--muted:#5b6470;--border:#d7dce2;--zebra:#f5f7fa;}",
+        "*{box-sizing:border-box}",
+        "body{font-family:-apple-system,Segoe UI,Arial,sans-serif;margin:0;padding:2.5em 3em;color:var(--text);"
+        "line-height:1.45;max-width:900px}",
+        "header.report-header{border-bottom:3px solid var(--navy);padding-bottom:0.6em;margin-bottom:1.4em;"
+        "display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:0.5em}",
+        "h1{font-size:1.6em;color:var(--navy);margin:0 0 0.15em}",
+        ".org-line{color:var(--muted);font-size:0.95em}",
+        ".meta-stamp{color:var(--muted);font-size:0.85em;text-align:right}",
+        "h2{font-size:1.2em;margin-top:2.2em;margin-bottom:0.5em;color:var(--navy);"
+        "border-bottom:2px solid var(--border);padding-bottom:0.3em}",
+        "h3{margin-top:0;margin-bottom:0.6em;color:var(--accent);font-size:1.02em;font-weight:600}",
+        "table{border-collapse:collapse;width:100%;margin:0.3em 0 1em}",
+        "td,th{border:1px solid var(--border);padding:8px 10px;text-align:left;vertical-align:top;font-size:0.92em}",
+        "th{background:var(--navy);color:#fff;font-weight:600}",
+        "tbody tr:nth-child(even){background:var(--zebra)}",
+        ".muted{color:var(--muted);font-size:0.88em}",
+        ".badge{display:inline-block;padding:3px 12px;border-radius:12px;background:var(--accent);"
+        "color:#fff;font-weight:600;font-size:0.85em;vertical-align:middle}",
+        "@media print{body{padding:1.2cm}a{color:inherit;text-decoration:none}"
+        "h2{page-break-after:avoid}tr{page-break-inside:avoid}}",
         "</style></head><body>",
-        "<h1>Business Impact Assessment &amp; DPIA Report</h1>",
-        "<table>",
+        "<header class='report-header'><div><h1>Business Impact Assessment &amp; DPIA Report</h1>",
+        f"<div class='org-line'>{report.get('org_name') or ''}</div></div>",
+        f"<div class='meta-stamp'>Generated {report.get('generated_at') or ''}</div></header>",
+        "<table><tbody>",
     ]
     for label, value in report["meta"]:
-        parts.append(f"<tr><th>{label}</th><td>{value or ''}</td></tr>")
-    parts.append("</table>")
+        parts.append(f"<tr><th style='width:38%'>{label}</th><td>{value or ''}</td></tr>")
+    parts.append("</tbody></table>")
 
     if report["protection"]:
         parts.append(
-            "<h2>Protection level (BIA results)</h2><table>"
+            "<h2>Protection level (BIA results)</h2><table><thead>"
             "<tr><th>Aspect</th><th>Maximum impact</th><th>Classification</th>"
-            "<th>Protection profile</th><th>Service level</th></tr>"
+            "<th>Protection profile</th><th>Service level</th></tr></thead><tbody>"
         )
         for p in report["protection"]:
             parts.append(
                 f"<tr><td>{p['aspect']}</td><td>{p['max_label']}</td>"
                 f"<td>{p['classification']}</td><td>{p['protection_profile']}</td><td>{p['service_level']}</td></tr>"
             )
-        parts.append("</table>")
+        parts.append("</tbody></table>")
 
     if report["dpia_needed"] is not None:
         dn = report["dpia_needed"]
@@ -438,7 +456,7 @@ def _html_report(report):
         )
 
     for section in report["sections"]:
-        parts.append(f"<h2>{section['tool_title']}</h2><h3>{section['section_title']}</h3><table>")
+        parts.append(f"<h2>{section['tool_title']}</h2><h3>{section['section_title']}</h3><table><tbody>")
         for row in section["rows"]:
             cell = row["answer"] or "<em>Not answered</em>"
             if row["comment"]:
@@ -447,7 +465,7 @@ def _html_report(report):
                 cell += "<br><span class='muted'>" + " | ".join(f"{k}: {v}" for k, v in row["risk"]) + "</span>"
             id_prefix = f"{row['id']} " if row["id"] else ""
             parts.append(f"<tr><th style='width:45%'>{id_prefix}{row['prompt']}</th><td>{cell}</td></tr>")
-        parts.append("</table>")
+        parts.append("</tbody></table>")
 
     parts.append("</body></html>")
     return "".join(parts)
