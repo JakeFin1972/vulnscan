@@ -24,14 +24,31 @@ RISK_FIELD_LABELS = [
 ]
 
 
-def _value_text(answer):
+def _option_label(options, raw_value, other_text):
+    for opt in options:
+        if str(opt.get("value")) == str(raw_value):
+            label = opt.get("label", str(raw_value))
+            if "other" in label.lower() and other_text:
+                return f"{label}: {other_text}"
+            return label
+    return str(raw_value)
+
+
+def _value_text(config, q, answer):
     if not answer:
         return ""
     value = answer.get("value")
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value)
     if value in (None, ""):
         return ""
+    other_text = answer.get("other_text") or ""
+    option_list = q.get("option_list")
+    options = config.get("option_lists", {}).get(option_list) if option_list else None
+    if options:
+        if isinstance(value, list):
+            return ", ".join(_option_label(options, v, other_text) for v in value)
+        return _option_label(options, value, other_text)
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
     return str(value)
 
 
@@ -96,7 +113,7 @@ def build_report(config, assessment, answers, results):
                     {
                         "id": q.get("id", ""),
                         "prompt": q["prompt"],
-                        "answer": _value_text(answer),
+                        "answer": _value_text(config, q, answer),
                         "comment": answer.get("comment") or "",
                         "risk": risk,
                     }

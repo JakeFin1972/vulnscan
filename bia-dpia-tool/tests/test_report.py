@@ -63,7 +63,14 @@ def test_answer_value_rendering_handles_lists_and_blanks():
     answers = {"dpia.q2_1": {"value": ["customers", "coworkers"]}}
     r = _report_for("dpia", answers)
     row = next(row for s in r["sections"] for row in s["rows"] if row["id"] == "2.1")
-    assert row["answer"] == "customers, coworkers"
+    assert row["answer"] == "Customers, Co-workers / employees"
+
+
+def test_answer_value_rendering_resolves_other_option_with_specify_text():
+    answers = {"dpia.q2_1": {"value": ["other"], "other_text": "Volunteers"}}
+    r = _report_for("dpia", answers)
+    row = next(row for s in r["sections"] for row in s["rows"] if row["id"] == "2.1")
+    assert row["answer"] == "Other, please specify: Volunteers"
 
 
 def test_risk_fields_only_shown_when_present():
