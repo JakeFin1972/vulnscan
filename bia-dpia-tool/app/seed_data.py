@@ -142,14 +142,38 @@ OPTION_LISTS = {
         {"value": "none", "label": "None"},
         {"value": "other", "label": "Other, please specify"},
     ],
+    "criticality_rating": [
+        {"value": "low", "label": "Low", "description": "Minor inconvenience if unavailable; can be restored within standard IT support timelines without material business impact."},
+        {"value": "medium", "label": "Medium", "description": "Noticeable disruption to the business; recovery should be prioritized but short delays are tolerable."},
+        {"value": "high", "label": "High", "description": "Significant disruption; rapid recovery is required to avoid material financial, operational or reputational impact."},
+        {"value": "critical", "label": "Critical", "description": "Mission-critical; any outage causes severe, immediate business, financial, regulatory and/or safety impact."},
+    ],
+    "rto_band": [
+        {"value": "near_zero", "label": "Near-zero (< 15 minutes)"},
+        {"value": "under_1h", "label": "Less than 1 hour"},
+        {"value": "1_4h", "label": "1 - 4 hours"},
+        {"value": "4_24h", "label": "4 - 24 hours (same business day)"},
+        {"value": "1_3d", "label": "1 - 3 days"},
+        {"value": "over_3d", "label": "More than 3 days / best effort"},
+        {"value": "not_defined", "label": "Not yet defined"},
+    ],
+    "rpo_band": [
+        {"value": "near_zero", "label": "Near-zero (continuous / synchronous replication)"},
+        {"value": "under_15m", "label": "Less than 15 minutes"},
+        {"value": "1_4h", "label": "1 - 4 hours"},
+        {"value": "4_24h", "label": "4 - 24 hours"},
+        {"value": "24_72h", "label": "24 - 72 hours (daily backup)"},
+        {"value": "over_72h", "label": "More than 72 hours / weekly backup or less frequent"},
+        {"value": "not_defined", "label": "Not yet defined"},
+    ],
 }
 
 BIA_SCREENING_QUESTIONS = [
     {
         "key": "bia.screening.q1_info_asset",
-        "prompt": "What is the information asset processed in the current or future solution?",
+        "prompt": "What are the information assets processed in the current or future solution? Select all that apply.",
         "guidance": "Personal data is data which can be used to identify a living individual (direct identification) or data which can be used along with other information in our possession, or likely to come into our possession, to identify an individual (indirect identification). Personal data is not just limited to structured data -- it can include images, video recordings, call recordings, blog posts or opinions, IP addresses and cookie files.",
-        "input_type": "select",
+        "input_type": "multiselect",
         "option_list": "info_subdomain",
     },
     {
@@ -248,6 +272,41 @@ BIA_AVAILABILITY_QUESTIONS = [
     _impact_question("bia.availability.q22", "What's the potential worst impact for other availability scenarios that could be relevant? Describe the scenario in the comment field.", "availability"),
 ]
 
+BIA_CRITICALITY_QUESTIONS = [
+    {
+        "key": "bia.criticality.q1_rating",
+        "prompt": "What is the overall criticality rating of this asset/service to the organization?",
+        "guidance": "Criticality reflects how severely the business would be affected if this asset or service were disrupted, independent of the Confidentiality/Integrity/Availability scoring above.",
+        "input_type": "select",
+        "option_list": "criticality_rating",
+    },
+    {
+        "key": "bia.criticality.q2_rto",
+        "prompt": "What is the Recovery Time Objective (RTO) for this asset/service?",
+        "guidance": "RTO is the maximum acceptable length of time this asset/service can be unavailable after a disruption before the outage causes unacceptable harm to the business.",
+        "input_type": "select",
+        "option_list": "rto_band",
+    },
+    {
+        "key": "bia.criticality.q3_rpo",
+        "prompt": "What is the Recovery Point Objective (RPO) for this asset/service?",
+        "guidance": "RPO is the maximum acceptable amount of data loss, measured as a point in time -- e.g. an RPO of 4 hours means recovery may lose up to the last 4 hours of data/transactions.",
+        "input_type": "select",
+        "option_list": "rpo_band",
+    },
+    {
+        "key": "bia.criticality.q4_bcdr_plan",
+        "prompt": "Is this asset/service covered by a documented Business Continuity / Disaster Recovery (BCDR) plan that has been tested within the last 12 months?",
+        "input_type": "yesno",
+        "option_list": "yes_no",
+    },
+    {
+        "key": "bia.criticality.q5_dependencies",
+        "prompt": "List the critical upstream/downstream dependencies (systems, third parties, infrastructure) that could affect this asset/service's recovery.",
+        "input_type": "textarea",
+    },
+]
+
 BIA_UNIQUENESS_QUESTIONS = [
     _impact_question("bia.uniqueness.q23", "What's the potential impact if there is more than one data repository?", "uniqueness", "As an example, a product has different prices in store, catalogue and web."),
     _impact_question("bia.uniqueness.q24", "What's the potential impact if there are different definitions for an information asset?", "uniqueness", "As an example, there are different definitions of weekly sales or product weight."),
@@ -296,6 +355,12 @@ TOOL_BIA = {
             "title": "Availability",
             "description": "Availability refers to the correct functioning and accessibility of information and solutions. Issues with availability could mean information or solutions aren't working properly and business processes are disrupted.",
             "questions": BIA_AVAILABILITY_QUESTIONS,
+        },
+        {
+            "key": "criticality",
+            "title": "Criticality & Recovery Objectives",
+            "description": "Captures how critical this asset/service is to the business and the recovery targets (RTO/RPO) that business continuity and disaster recovery planning should be designed against.",
+            "questions": BIA_CRITICALITY_QUESTIONS,
         },
         {
             "key": "uniqueness",
