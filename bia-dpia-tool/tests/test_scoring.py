@@ -60,6 +60,18 @@ def test_non_ci_a_categories_have_no_classification_code():
     assert "classification_code" not in results["uniqueness"]
 
 
+def test_criticality_section_is_informational_and_not_scored():
+    # Criticality/RTO/RPO questions carry no "category"/"impact" input_type,
+    # so they must never show up as a scored BIA category.
+    answers = {
+        "bia.criticality.q1_rating": {"value": "critical"},
+        "bia.criticality.q2_rto": {"value": "near_zero"},
+        "bia.criticality.q3_rpo": {"value": "under_15m"},
+    }
+    results = scoring.compute_bia_results(DEFAULT_CONFIG, answers)
+    assert "criticality" not in results
+
+
 def test_dpia_needed_triggers_on_profile_count_threshold():
     answers = {"bia.screening.q2_profile_count": {"value": 5000}}
     result = scoring.compute_dpia_needed(DEFAULT_CONFIG, answers)

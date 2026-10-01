@@ -371,10 +371,26 @@ function dpiaNeededNoticeHtml(tool) {
 
 // ------------------------------------------------------------ questions --
 
+// Any option whose label mentions "other" (e.g. "Other, please specify")
+// gets a conditional free-text field shown only while it's selected --
+// matched by label wording, not by a specific value slug, so it still works
+// if an admin renames the option's internal value.
+function findOtherValue(options) {
+  const opt = (options || []).find((o) => /other/i.test(o.label || ""));
+  return opt ? String(opt.value) : null;
+}
+
+function isOtherSelected(otherValue, value) {
+  if (!otherValue) return false;
+  if (Array.isArray(value)) return value.map(String).includes(otherValue);
+  return value !== undefined && value !== null && String(value) === otherValue;
+}
+
 function renderQuestionHtml(tool, q) {
   const answer = state.answers[q.key] || {};
   const idLabel = q.id ? `<span class="qid">${escapeHtml(q.id)}</span>` : "";
   let inputHtml = "";
+  let otherValue = null;
 
   switch (q.input_type) {
     case "text":
@@ -392,12 +408,18 @@ function renderQuestionHtml(tool, q) {
     case "yesno":
       inputHtml = selectHtml(state.config.option_lists.yes_no, answer.value, "value", "-- select --");
       break;
-    case "select":
-      inputHtml = selectHtml(state.config.option_lists[q.option_list] || [], answer.value, "value", "-- select --");
+    case "select": {
+      const opts = state.config.option_lists[q.option_list] || [];
+      otherValue = findOtherValue(opts);
+      inputHtml = selectHtml(opts, answer.value, "value", "-- select --");
       break;
-    case "multiselect":
-      inputHtml = checkboxListHtml(state.config.option_lists[q.option_list] || [], answer.value || []);
+    }
+    case "multiselect": {
+      const opts = state.config.option_lists[q.option_list] || [];
+      otherValue = findOtherValue(opts);
+      inputHtml = checkboxListHtml(opts, answer.value || []);
       break;
+    }
     case "impact": {
       const opts = (state.config.option_lists.impact_scale || []).filter((o) => o.value >= 0);
       inputHtml = selectHtml(opts, answer.value, "value", "-- select impact --");
@@ -407,6 +429,13 @@ function renderQuestionHtml(tool, q) {
       inputHtml = `<input type="text" data-field="value" value="${escapeHtml(answer.value || "")}">`;
   }
 
+  const otherHtml = otherValue
+    ? `<div class="other-specify" data-other-specify data-other-value="${escapeHtml(otherValue)}" ${isOtherSelected(otherValue, answer.value) ? "" : 'style="display:none"'}>
+        <label>Please specify</label>
+        <input type="text" data-field="other_text" value="${escapeHtml(answer.other_text || "")}">
+      </div>`
+    : "";
+
   const riskHtml = q.has_risk_register ? renderRiskPanel(q, answer) : "";
 
   return `
@@ -414,6 +443,7 @@ function renderQuestionHtml(tool, q) {
       <label class="prompt">${idLabel}${escapeHtml(q.prompt)}</label>
       ${q.guidance ? `<div class="guidance">${escapeHtml(q.guidance)}</div>` : ""}
       ${inputHtml}
+      ${otherHtml}
       <div class="comment-field">
         <label>Comment</label>
         <input type="text" data-field="comment" value="${escapeHtml(answer.comment || "")}" placeholder="Optional notes...">
@@ -507,6 +537,8 @@ function readAnswerFromContainer(container, q) {
   }
   const commentEl = container.querySelector('[data-field="comment"]');
   if (commentEl) obj.comment = commentEl.value;
+  const otherTextEl = container.querySelector('[data-field="other_text"]');
+  if (otherTextEl) obj.other_text = otherTextEl.value;
   if (q.has_risk_register) {
     for (const f of RISK_FIELDS) {
       const fe = container.querySelector(`[data-field="${f}"]`);
@@ -536,6 +568,11 @@ function wireQuestionEvents(qContainer, tool) {
     if (!q) return;
     const obj = readAnswerFromContainer(container, q);
     state.answers[key] = obj;
+    const otherPanel = container.querySelector("[data-other-specify]");
+    if (otherPanel) {
+      const otherValue = otherPanel.dataset.otherValue;
+      otherPanel.style.display = isOtherSelected(otherValue, obj.value) ? "" : "none";
+    }
     queueSave(tool, key, obj, container, q);
   };
 

@@ -24,14 +24,31 @@ RISK_FIELD_LABELS = [
 ]
 
 
-def _value_text(answer):
+def _option_label(options, raw_value, other_text):
+    for opt in options:
+        if str(opt.get("value")) == str(raw_value):
+            label = opt.get("label", str(raw_value))
+            if "other" in label.lower() and other_text:
+                return f"{label}: {other_text}"
+            return label
+    return str(raw_value)
+
+
+def _value_text(config, q, answer):
     if not answer:
         return ""
     value = answer.get("value")
-    if isinstance(value, list):
-        return ", ".join(str(v) for v in value)
     if value in (None, ""):
         return ""
+    other_text = answer.get("other_text") or ""
+    option_list = q.get("option_list")
+    options = config.get("option_lists", {}).get(option_list) if option_list else None
+    if options:
+        if isinstance(value, list):
+            return ", ".join(_option_label(options, v, other_text) for v in value)
+        return _option_label(options, value, other_text)
+    if isinstance(value, list):
+        return ", ".join(str(v) for v in value)
     return str(value)
 
 
@@ -43,6 +60,8 @@ SCOPE_TOOLS = {"bia": ["bia"], "dpia": ["dpia0", "dpia"], "both": ["bia", "dpia0
 
 
 def build_report(config, assessment, answers, results):
+    import datetime
+
     a = assessment
     scope = a.get("scope", "both")
     include_bia = scope in ("bia", "both")
@@ -96,14 +115,23 @@ def build_report(config, assessment, answers, results):
                     {
                         "id": q.get("id", ""),
                         "prompt": q["prompt"],
-                        "answer": _value_text(answer),
+                        "answer": _value_text(config, q, answer),
                         "comment": answer.get("comment") or "",
                         "risk": risk,
                     }
                 )
             sections.append({"tool_title": tool["title"], "section_title": section["title"], "rows": rows})
 
-    return {"scope": scope, "meta": meta, "protection": protection, "dpia_needed": dpia_needed, "sections": sections}
+    return {
+        "scope": scope,
+        "org_name": config.get("org_name") or "",
+        "project_name": a.get("project_name") or "",
+        "generated_at": datetime.datetime.now().strftime("%d %b %Y, %H:%M"),
+        "meta": meta,
+        "protection": protection,
+        "dpia_needed": dpia_needed,
+        "sections": sections,
+    }
 
 
 def report_filename(assessment, ext):

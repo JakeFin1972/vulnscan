@@ -63,7 +63,14 @@ def test_answer_value_rendering_handles_lists_and_blanks():
     answers = {"dpia.q2_1": {"value": ["customers", "coworkers"]}}
     r = _report_for("dpia", answers)
     row = next(row for s in r["sections"] for row in s["rows"] if row["id"] == "2.1")
-    assert row["answer"] == "customers, coworkers"
+    assert row["answer"] == "Customers, Co-workers / employees"
+
+
+def test_answer_value_rendering_resolves_other_option_with_specify_text():
+    answers = {"dpia.q2_1": {"value": ["other"], "other_text": "Volunteers"}}
+    r = _report_for("dpia", answers)
+    row = next(row for s in r["sections"] for row in s["rows"] if row["id"] == "2.1")
+    assert row["answer"] == "Other, please specify: Volunteers"
 
 
 def test_risk_fields_only_shown_when_present():
@@ -74,6 +81,27 @@ def test_risk_fields_only_shown_when_present():
     assert risk_dict["Likelihood"] == "4"
     assert risk_dict["Risk owner"] == "Dana"
     assert "Remediation options" not in risk_dict
+
+
+def test_info_asset_question_supports_multiple_selections():
+    answers = {"bia.screening.q1_info_asset": {"value": ["cardholder_data", "marketing"]}}
+    r = _report_for("bia", answers)
+    row = next(row for s in r["sections"] for row in s["rows"] if row["prompt"].startswith("What are the information assets"))
+    assert row["answer"] == "Cardholder data, Marketing"
+
+
+def test_criticality_section_renders_with_resolved_labels():
+    answers = {
+        "bia.criticality.q1_rating": {"value": "critical"},
+        "bia.criticality.q2_rto": {"value": "near_zero"},
+        "bia.criticality.q3_rpo": {"value": "under_15m"},
+    }
+    r = _report_for("bia", answers)
+    section = next(s for s in r["sections"] if s["section_title"] == "Criticality & Recovery Objectives")
+    by_prompt = {row["prompt"]: row["answer"] for row in section["rows"]}
+    assert by_prompt["What is the overall criticality rating of this asset/service to the organization?"] == "Critical"
+    assert by_prompt["What is the Recovery Time Objective (RTO) for this asset/service?"] == "Near-zero (< 15 minutes)"
+    assert by_prompt["What is the Recovery Point Objective (RPO) for this asset/service?"] == "Less than 15 minutes"
 
 
 def test_report_filename_sanitizes_project_name():

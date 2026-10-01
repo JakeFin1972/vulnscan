@@ -9,6 +9,9 @@ def build_csv(report) -> bytes:
     w = csv.writer(buf)
 
     w.writerow(["Business Impact Assessment & DPIA Report"])
+    if report.get("org_name"):
+        w.writerow([report["org_name"]])
+    w.writerow([f"Generated {report['generated_at']}"] if report.get("generated_at") else [])
     w.writerow([])
     for label, value in report["meta"]:
         w.writerow([label, value])
