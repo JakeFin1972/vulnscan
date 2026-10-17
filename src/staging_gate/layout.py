@@ -2,7 +2,7 @@
 checked against Test-version36-17Aug-BoardCyberShield.xlsx."""
 
 LOCK_PW = "IDEOINTI-staging-gate"  # must equal LOCK_PW in the Excel scripts
-STAMP_SOURCE = "H2 v2.0 / H3 v1.0"  # written to ChangeLog col J, as the script does
+STAMP_SOURCE = "H2 v2.0 / H3 v4.0"  # ChangeLog col J; the Excel scripts still write "H3 v1.0" (stale)
 
 STAGING = "Staging"
 STAGING_RISKS = "Staging-Risks"

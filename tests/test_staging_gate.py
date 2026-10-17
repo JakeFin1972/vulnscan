@@ -169,3 +169,32 @@ def test_risks_bad_json_and_single_object():
     with pytest.raises(ValueError, match="empty"):
         import_risks(make_wb(), "")
     assert import_risks(make_wb(), json.dumps(RISK))[0] == 1
+
+
+H3_MD = "# H3\n\n## System prompt (v4.0)\n\n```\nYou are H3.\nJSON only.\n```\n"
+
+
+def _fix_wb():
+    from openpyxl.worksheet.datavalidation import DataValidation
+    wb = make_wb()
+    ws = wb["Prompts"]
+    ws["A7"], ws["B7"], ws["C7"] = "H3 Risk identification", "v1.0", "old prompt"
+    dv = DataValidation(type="list", formula1='"y,n"')
+    dv.add("A7:A160")
+    wb[L.STAGING].add_data_validation(dv)
+    lock(wb)
+    return wb
+
+
+def test_fix_workbook_updates_prompt_and_dropdown_and_is_idempotent():
+    from staging_gate.fixes import fix_workbook
+    wb = _fix_wb()
+    res = fix_workbook(wb, H3_MD)
+    assert len(res.done) == 2
+    assert (wb["Prompts"]["B7"].value, wb["Prompts"]["C7"].value) == ("v4.0", "You are H3.\nJSON only.")
+    assert wb[L.STAGING].data_validations.dataValidation[0].formula1 == '"y,n,y!"'
+    assert wb["Prompts"].protection.sheet and verify(wb["Prompts"]) and verify(wb[L.CHANGELOG])
+    assert results(wb) == ["PROMPT UPDATED", "DROPDOWN UPDATED"]
+    again = fix_workbook(wb, H3_MD)
+    assert not again.done and len(again.skipped) == 2
+    assert len(results(wb)) == 2

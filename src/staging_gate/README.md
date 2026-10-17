@@ -11,6 +11,7 @@ Layout constants live in `layout.py`; they were checked against `Test-version36-
     python -m staging_gate h2 wb.xlsx --prompt H2.md --profile profile.md --evidence EvidenceRegister.csv -o scratch.xlsx
     python -m staging_gate h3 wb.xlsx --prompt H3.md --profile profile.md -o scratch.xlsx
 
+    python -m staging_gate fix-workbook wb.xlsx --h3-prompt 03_H3….md -o scratch.xlsx
     python -m staging_gate profile-docx profile.md --config review.json --no-prompt   (add --stamp first, once)
     python -m staging_gate review-extract Profile_REVIEW.docx --profile profile.md
     python -m staging_gate review-apply   ChangeProposals.md  --profile profile.md --new-version CP-v2-approved

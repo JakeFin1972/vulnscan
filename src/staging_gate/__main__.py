@@ -52,7 +52,8 @@ def main(argv=None):
                     ("import-risks", f"import JSON from {L.STAGING_RISKS}!{L.RISK_JSON_CELL}"),
                     ("rollup", "print the weighted roll-up for a sheet"),
                     ("h2", "run H2 on sheets 1-6 and write guarded proposals to Staging"),
-                    ("h3", "run H3 and write its JSON into Staging-Risks")]:
+                    ("h3", "run H3 and write its JSON into Staging-Risks"),
+                    ("fix-workbook", "update the Prompts sheet H3 to the spec version; allow y! in the Staging dropdown")]:
         s = sub.add_parser(name, help=h)
         s.add_argument("workbook")
         if name == "rollup":
@@ -64,6 +65,9 @@ def main(argv=None):
             s.add_argument("--evidence", required=True, help="Evidence Register (.csv or markdown table)")
         if name == "h3":
             _model_args(s)
+        if name == "fix-workbook":
+            s.add_argument("--h3-prompt", help="the H3 .md file (its '## System prompt (vX.Y)' block replaces the Prompts sheet cell)")
+            s.add_argument("--no-dropdown", action="store_true")
     a = p.parse_args(argv)
     if a.cmd == "profile-docx":
         from . import profile_review
@@ -104,6 +108,14 @@ def main(argv=None):
                   f"{len(notes)} guard changes")
             for x in notes:
                 print("  guard:", x)
+        elif a.cmd == "fix-workbook":
+            from .fixes import fix_workbook
+            md = Path(a.h3_prompt).read_text(encoding="utf-8") if a.h3_prompt else None
+            res = fix_workbook(wb, md, not a.no_dropdown)
+            for x in res.done:
+                print("fixed:", x)
+            for x in res.skipped:
+                print("skipped:", x)
         elif a.cmd == "h3":
             profile = Path(a.profile).read_text(encoding="utf-8")
             system = extract_system_prompt(Path(a.prompt).read_text(encoding="utf-8"))
