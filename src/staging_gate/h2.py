@@ -12,7 +12,7 @@ def write_staging(wb, result: dict) -> int:
         if r > last:
             raise ValueError(f"Staging is full (row {last}); apply or clear rows first")
         cell(st, L.COL_SHEET, r).value = p["sheet"]
-        cell(st, L.COL_NR, r).value = p["nr"]
+        cell(st, L.COL_NR, r).value = int(p["nr"]) if str(p["nr"]).isdigit() else p["nr"]  # MATCH needs a number
         cols = L.H2_STAGING_COLS
         cell(st, cols["F"], r).value = p.get("F") or None
         cell(st, cols["G"], r).value = p.get("G") or None

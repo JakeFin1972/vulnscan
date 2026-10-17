@@ -28,6 +28,10 @@ def num(v) -> float:
         return math.nan
 
 
+def blank_s(v) -> bool:
+    return s(v) == ""
+
+
 def cell(ws, col: str, row: int):
     return ws.cell(row=row, column=ci(col))
 

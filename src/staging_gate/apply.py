@@ -129,8 +129,8 @@ def apply_approved(wb) -> Result:
     if L.CHANGELOG not in wb.sheetnames:
         raise ValueError("ChangeLog sheet missing - aborting.")
     res, now = Result(), stamp()
-    set_protection(wb, L.LOCKED_SHEETS, False)
     try:
+        set_protection(wb, L.LOCKED_SHEETS, False)
         log = ChangeLog(wb, now)
         if L.STAGING in wb.sheetnames:
             _controls(wb, res, log, now)

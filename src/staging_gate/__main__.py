@@ -51,9 +51,9 @@ def main(argv=None):
     a = p.parse_args(argv)
     wb = open_wb(a.workbook)
     if a.cmd == "rollup":
-        r = rollup(wb[a.sheet])
-        print(f"{r['value']:.2f} from rows {', '.join(r['rows']) or '-'}"
-              + (f"; excluded (no numeric criticality): {', '.join(r['no_weight'])}" if r["no_weight"] else ""))
+        for b in rollup(wb, a.sheet):
+            print(f"rows {b['first']}-{b['last']}: {b['value']:.2f} from nr {', '.join(b['rows']) or '-'}"
+                  + (f"  [weight 0, excluded: {', '.join(b['zero_weight'])}]" if b["zero_weight"] else ""))
         return 0
     try:
         if a.cmd == "lock":
@@ -88,7 +88,7 @@ def main(argv=None):
             print(f"Risks imported: {n} | rejected: {len(rej)}")
             for why in rej:
                 print(f"  - {why}")
-    except (ValueError, RuntimeError) as e:
+    except (ValueError, RuntimeError, PermissionError) as e:
         print(e, file=sys.stderr)
         return 1
     wb.save(a.output or a.workbook)

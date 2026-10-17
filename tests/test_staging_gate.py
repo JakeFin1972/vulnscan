@@ -5,7 +5,7 @@ from openpyxl import Workbook, load_workbook
 
 from staging_gate import layout as L
 from staging_gate.apply import apply_approved
-from staging_gate.lock import lock
+from staging_gate.lock import lock, unprotect, verify
 from staging_gate.risks import import_risks
 from staging_gate.rollup import rollup
 
@@ -19,8 +19,12 @@ def make_wb():
         if name not in wb.sheetnames:
             wb.create_sheet(name)
     d = wb[DETECT]
-    for i, (nr, crit) in enumerate([("D.1", 3), ("D.2", 1), ("D.3", 2)]):
-        d[f"A{9 + i}"], d[f"D{9 + i}"] = nr, crit
+    for i, (nr, crit) in enumerate([("D.1", "1-Critical"), ("D.2", "3-Enabler"), ("D.3", "2-Important")]):
+        d[f"A{9 + i}"], d[f"H{9 + i}"] = nr, crit
+    d["K9"] = "=IFERROR(0,0)"  # category block anchor (rows 9-11)
+    cfg = wb[L.CONFIG_SHEET]
+    for r, (n, w) in enumerate([("1-Critical", 3), ("2-Important", 2), ("3-Enabler", 1)], 5):
+        cfg[f"B{r}"], cfg[f"C{r}"] = n, w
     st = wb[L.STAGING]
     for i, nr in enumerate(["D.1", "D.2", "D.3"]):
         r = 7 + i
@@ -32,7 +36,7 @@ def make_wb():
 
 def log_rows(wb):
     ws = wb[L.CHANGELOG]
-    return [[c.value for c in row] for row in ws.iter_rows(min_row=5, max_col=11) if row[1].value]
+    return [[c.value for c in row] for row in ws.iter_rows(min_row=4, max_col=11) if row[1].value]
 
 
 def results(wb):
@@ -106,14 +110,32 @@ def test_lock_and_apply_relocks():
     apply_approved(wb)
     assert wb[DETECT]["S9"].value == 1
     assert all(wb[n].protection.sheet for n in L.LOCKED_SHEETS)
+    assert verify(wb[DETECT]) and not verify(wb[DETECT], "wrong")
+    with pytest.raises(PermissionError):
+        unprotect(wb[DETECT], "wrong")
+
+
+def test_protection_survives_save_and_wrong_lock_pw_blocks_apply(tmp_path, monkeypatch):
+    wb = make_wb()
+    lock(wb)
+    p = tmp_path / "t.xlsx"
+    wb.save(p)
+    wb2 = load_workbook(p)
+    assert verify(wb2[DETECT])
+    wb2[L.STAGING]["A7"] = "y"
+    monkeypatch.setattr(L, "LOCK_PW", "different")
+    with pytest.raises(PermissionError):
+        apply_approved(wb2)
+    assert wb2[DETECT]["S9"].value is None
 
 
 def test_rollup_weighted_and_excludes_zero():
     wb = make_wb()
     wb[L.STAGING]["A7"], wb[L.STAGING]["A9"] = "y", "y"
     apply_approved(wb)
-    r = rollup(wb[DETECT])
-    assert r["rows"] == ["D.1", "D.3"] and r["value"] == pytest.approx((1 * 3 + 3 * 2) / 5)
+    (b,) = rollup(wb, DETECT)
+    assert (b["first"], b["last"]) == (9, 11)
+    assert b["rows"] == ["D.1", "D.3"] and b["value"] == pytest.approx((1 * 3 + 3 * 2) / 5)
 
 
 RISK = {"B": "PR.AA", "C": "Weak MFA", "D": "cur", "E": "tgt", "F": "desc", "G": "act",

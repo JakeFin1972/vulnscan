@@ -1,5 +1,5 @@
-"""Workbook layout, taken from ApplyApproved.ts v1.3 / LockDown.ts v1.1 / ImportRisksFromJSON.ts v1.0.
-Items marked ASSUMED are not in those scripts and need checking against the workbook."""
+"""Workbook layout, taken from ApplyApproved.ts v1.3 / LockDown.ts v1.1 / ImportRisksFromJSON.ts v1.0 and
+checked against Test-version36-17Aug-BoardCyberShield.xlsx."""
 
 LOCK_PW = "IDEOINTI-staging-gate"  # must equal LOCK_PW in the Excel scripts
 STAMP_SOURCE = "H2 v2.0 / H3 v1.0"  # written to ChangeLog col J, as the script does
@@ -27,10 +27,10 @@ MATURITY_RANGE = (0, 5)
 # --- function sheets: nr in column A, block A9:U40 ---
 NR_COL, FIRST_ROW, LAST_ROW = "A", 9, 40
 
-# --- ChangeLog: 11 columns A..K, first free row found via column B from row 5 ---
-LOG_FIRST_ROW, LOG_KEY_COL = 5, "B"
-LOG_HEADER = ["Timestamp", "Source", "Sheet", "ID", "Column", "Old", "New",
-              "Evidence", "Confidence", "Prompt versions", "Result"]  # ASSUMED header text
+# --- ChangeLog: 11 columns A..K, header in row 3, first free row found via column B.
+# ChangeLog.ts-side note: ApplyApproved.ts starts its scan at row 5, so row 4 stays blank; the
+# Python port starts at row 4 (the first row under the header). Mixed use is safe.
+LOG_FIRST_ROW, LOG_KEY_COL = 4, "B"
 
 # --- Staging-Risks: data rows 7..60, columns A..Q ---
 RISK_STAGING_FIRST_ROW, RISK_STAGING_ROWS = 7, 54
@@ -49,16 +49,20 @@ RISK_TARGET_FIRST_ROW, RISK_TARGET_KEY_COL = 12, "C"
 RISK_APPLY_MAP = {"B": "B", "C": "C", "D": "D", "E": "E", "F": "F", "G": "G",
                   "H": "H", "I": "I", "J": "J", "K": "M", "L": "R", "M": "S"}
 
-# --- roll-up (K9 is an Excel formula; this is only a read-only check) ---
-ROLLUP_MATURITY_COL = "S"  # ASSUMED: which of S/T/U feeds K9
-CRITICALITY_COL = "D"  # ASSUMED
+# --- roll-up: K/L/M on the first row of each category block are Excel formulas
+# =IFERROR(SUMPRODUCT(V,S)/SUMPRODUCT(V,--(S>0)),0); V = weight from Config via column H. ---
+MATURITY_COL = "S"  # S, T, U are the control-level maturity columns
+CRITICALITY_COL = "H"  # text such as "1-Critical"
+ROLLUP_COLS = {"K": "S", "L": "T", "M": "U"}  # category column -> control column
+CONFIG_SHEET = "Config"
+CONFIG_NAME_COL, CONFIG_WEIGHT_COL, CONFIG_FIRST_ROW, CONFIG_LAST_ROW = "B", "C", 5, 7
 
-# --- H2 helper (from 02_H2 output contract + architecture doc write-back contract) ---
+# --- H2 helper (02_H2 output contract; staging columns checked against the workbook headers) ---
 CONTROL_SHEETS = ["1.Govern", "2. Identify", "3. Protect", "4. DETECT", "5. RESPOND", "6. RECOVER"]
 CTRL_TOPIC_COL, CTRL_QUESTION_COL, CTRL_CRIT_COL, CTRL_NIST_COL = "C", "D", "H", "N"
 CTRL_CURRENT_STATE_COL = "F"
 # Staging column that receives each H2 JSON field. D, M, N are lookups; A, O belong to the human/script.
-# E..I and K, L are fixed by ApplyApproved.ts; J (rationale + flags) is ASSUMED.
+# E..I, K, L fixed by ApplyApproved.ts; J is the "Rationale" column in the workbook.
 H2_STAGING_COLS = {"F": "E", "G": "F", "S": "G", "T_proposed": "H", "U_proposed": "I",
                    "rationale": "J", "evidence": "K", "confidence": "L"}
 RISKS_NAME_COL = "C"  # existing risk names on 8. Risks (ApplyApproved.ts uses column C)

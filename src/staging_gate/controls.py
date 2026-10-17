@@ -24,6 +24,6 @@ def read_controls(wb) -> list[dict]:
                 "criticality": s(cell(ws, L.CTRL_CRIT_COL, r).value),
                 "nist": s(cell(ws, L.CTRL_NIST_COL, r).value),
                 "current_state": s(cell(ws, L.CTRL_CURRENT_STATE_COL, r).value),
-                "maturity_S": s(cell(ws, L.ROLLUP_MATURITY_COL, r).value),
+                "maturity_S": s(cell(ws, L.MATURITY_COL, r).value),
             })
     return out
