@@ -29,9 +29,25 @@ def _model_args(s):
     s.add_argument("--no-fallbacks", action="store_true")
 
 
+def _review_cmds(sub):
+    s = sub.add_parser("profile-docx", help="render the profile markdown to a Word review copy (or --stamp IDs)")
+    s.add_argument("input")
+    s.add_argument("--out"), s.add_argument("--config")
+    s.add_argument("--stamp", action="store_true"), s.add_argument("--no-prompt", action="store_true")
+    for k in ("ciso-email", "ciso-name", "coordinator-email", "coordinator-name"):
+        s.add_argument("--" + k)
+    s = sub.add_parser("review-extract", help="turn a commented .docx into ChangeProposals.md")
+    s.add_argument("input"), s.add_argument("--profile", required=True), s.add_argument("--out")
+    s = sub.add_parser("review-apply", help="apply approved proposals to the master profile .md")
+    s.add_argument("input"), s.add_argument("--profile", required=True)
+    s.add_argument("--new-version"), s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--force", action="store_true")
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="staging_gate")
     sub = p.add_subparsers(dest="cmd", required=True)
+    _review_cmds(sub)
     for name, h in [("lock", "protect all live sheets"), ("apply", "apply approved staging rows"),
                     ("import-risks", f"import JSON from {L.STAGING_RISKS}!{L.RISK_JSON_CELL}"),
                     ("rollup", "print the weighted roll-up for a sheet"),
@@ -49,6 +65,15 @@ def main(argv=None):
         if name == "h3":
             _model_args(s)
     a = p.parse_args(argv)
+    if a.cmd == "profile-docx":
+        from . import profile_review
+        return profile_review.run(vars(a))
+    if a.cmd == "review-extract":
+        from . import review_changes
+        return review_changes.cmd_extract(a.input, a.profile, a.out)
+    if a.cmd == "review-apply":
+        from . import review_changes
+        return review_changes.cmd_apply(a.input, a.profile, a.new_version, a.dry_run, a.force)
     wb = open_wb(a.workbook)
     if a.cmd == "rollup":
         for b in rollup(wb, a.sheet):
