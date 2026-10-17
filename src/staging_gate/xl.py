@@ -1,4 +1,5 @@
 """Small openpyxl helpers shared by the commands."""
+import math
 from datetime import datetime, timezone
 
 from openpyxl import load_workbook
@@ -7,24 +8,49 @@ from openpyxl.utils import column_index_from_string as ci
 from . import layout as L
 
 
-def now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+def stamp() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def blank(v) -> bool:
-    return v is None or (isinstance(v, str) and not v.strip())
+def s(v) -> str:
+    """String(v).trim() as the Excel scripts see a cell value."""
+    if v is None:
+        return ""
+    if isinstance(v, float) and v.is_integer():
+        v = int(v)
+    return str(v).strip()
+
+
+def num(v) -> float:
+    try:
+        return float(s(v))
+    except ValueError:
+        return math.nan
 
 
 def cell(ws, col: str, row: int):
     return ws.cell(row=row, column=ci(col))
 
 
-def log(wb, sheet, nr, addr, status, old="", new="", src=""):
-    ws = wb[L.CHANGELOG] if L.CHANGELOG in wb.sheetnames else wb.create_sheet(L.CHANGELOG)
-    if ws.max_row == 1 and ws.cell(1, 1).value is None:
-        ws.append(["Timestamp", "Sheet", "nr", "Cell", "Status", "Old", "New", "Staging row"])
-    ws.append([now(), sheet, nr, addr, status, old, new, src])
+def first_empty_row(ws, col: str, start: int, span: int = 400) -> int:
+    for r in range(start, start + span):
+        if s(cell(ws, col, r).value) == "":
+            return r
+    return start + span
 
 
 def open_wb(path):
     return load_workbook(path)
+
+
+class ChangeLog:
+    def __init__(self, wb, now: str):
+        self.ws = wb[L.CHANGELOG]
+        self.row = first_empty_row(self.ws, L.LOG_KEY_COL, L.LOG_FIRST_ROW)
+        self.now = now
+
+    def write(self, src, sheet, id_, col, old, new, ev, conf, result):
+        vals = [self.now, src, sheet, id_, col, old, new, ev, conf, L.STAMP_SOURCE, result]
+        for i, v in enumerate(vals, 1):
+            self.ws.cell(self.row, i).value = v
+        self.row += 1

@@ -1,46 +1,54 @@
-"""Workbook layout. Values marked STATED come from the test plan; ASSUMED ones must be
-checked against the real workbook and edited here (nowhere else)."""
+"""Workbook layout, taken from ApplyApproved.ts v1.3 / LockDown.ts v1.1 / ImportRisksFromJSON.ts v1.0.
+Items marked ASSUMED are not in those scripts and need checking against the workbook."""
 
-LOCK_PW = "IDEOINTI-staging-gate"  # STATED: must match the Excel scripts' LOCK_PW
+LOCK_PW = "IDEOINTI-staging-gate"  # must equal LOCK_PW in the Excel scripts
+STAMP_SOURCE = "H2 v2.0 / H3 v1.0"  # written to ChangeLog col J, as the script does
 
-STAGING = "Staging"  # STATED
-STAGING_RISKS = "Staging-Risks"  # STATED
-CHANGELOG = "ChangeLog"  # STATED
-RISKS_SHEET = "8. Risks"  # STATED
-REPORTING = "Reporting"  # STATED
-WRITABLE = {STAGING, STAGING_RISKS}  # STATED: LockDown leaves only these writable
+STAGING = "Staging"
+STAGING_RISKS = "Staging-Risks"
+CHANGELOG = "ChangeLog"
+RISKS_SHEET = "8. Risks"
+OPEN_SHEETS = [STAGING, STAGING_RISKS]
+LOCKED_SHEETS = [
+    "Reporting", "1.Govern", "2. Identify", "3. Protect", "4. DETECT",
+    "5. RESPOND", "6. RECOVER", "7. Strategic action plan", "8. Risks",
+    "ChangeLog", "Config", "Prompts", "Guidance2", "Additional",
+]
 
-# --- control staging (Staging) ---
-STAGING_FIRST_ROW = 7  # STATED
-COL_APPROVE = "A"  # STATED ('y' / 'y!')
-COL_SHEET = "B"  # ASSUMED: target sheet name, e.g. "4. DETECT"
-COL_NR = "C"  # ASSUMED: control number
-COL_APPLIED = "O"  # STATED: timestamp stamp
-# STATED that F/G/S land on the function sheet (E too per Test 2); which staging column
-# feeds S is ASSUMED to be H (maturity).
-FIELD_MAP = {"E": "E", "F": "F", "G": "G", "H": "S"}  # staging col -> target col
-MATURITY_STAGING_COL = "H"  # ASSUMED
-MATURITY_RANGE = (0, 5)  # STATED: PRISMA 0-5
+# --- Staging (controls): data rows 7..160, columns A..O ---
+STAGING_FIRST_ROW, STAGING_ROWS = 7, 154
+# staging column -> (function-sheet column, is_maturity)
+CONTROL_MAP = [("E", "F", False), ("F", "G", False),
+               ("G", "S", True), ("H", "T", True), ("I", "U", True)]
+COL_APPROVE, COL_SHEET, COL_NR = "A", "B", "C"
+COL_EVIDENCE, COL_CONFIDENCE, COL_STAMP = "K", "L", "O"
+MATURITY_RANGE = (0, 5)
 
-# --- function sheets ---
-NR_COL = "A"  # ASSUMED (STATED only that the lookup scans A9:U40)
-FIRST_ROW, LAST_ROW = 9, 40  # STATED
-MATURITY_COL = "S"  # STATED (written column)
-CRITICALITY_COL = "D"  # ASSUMED: weight used by the K9 roll-up
-ROLLUP_CELL = "K9"  # STATED
+# --- function sheets: nr in column A, block A9:U40 ---
+NR_COL, FIRST_ROW, LAST_ROW = "A", 9, 40
 
-# --- risk staging (Staging-Risks) ---
-RISK_JSON_CELL = "S2"  # STATED
-RISK_FIRST_ROW = 7  # STATED
-RISK_COL_APPROVE = "A"  # STATED
-RISK_COL_APPLIED = "Q"  # STATED
-RISK_COL_BASIS = "O"  # STATED: rating basis + evidence together
-# JSON key -> Staging-Risks column (ASSUMED except basis/evidence -> O)
-RISK_STAGING_COLS = {"source": "B", "title": "C", "description": "D",
-                     "likelihood": "E", "impact": "F"}
-RISK_REQUIRED = ("source", "title", "description", "rating_basis", "evidence")
-RISK_SCALE = (1, 5)  # ASSUMED for likelihood/impact
-# Staging-Risks column -> 8. Risks column (ASSUMED). A, K, L, N stay empty (STATED).
-RISK_TARGET_COLS = {"C": "B", "D": "C", "E": "D", "F": "E", "B": "F", "O": "G"}
-RISK_TARGET_FIRST_ROW = 12  # STATED
-RISK_TARGET_KEY_COL = "B"  # ASSUMED: used to find the next empty row
+# --- ChangeLog: 11 columns A..K, first free row found via column B from row 5 ---
+LOG_FIRST_ROW, LOG_KEY_COL = 5, "B"
+LOG_HEADER = ["Timestamp", "Source", "Sheet", "ID", "Column", "Old", "New",
+              "Evidence", "Confidence", "Prompt versions", "Result"]  # ASSUMED header text
+
+# --- Staging-Risks: data rows 7..60, columns A..Q ---
+RISK_STAGING_FIRST_ROW, RISK_STAGING_ROWS = 7, 54
+RISK_JSON_CELL = "S2"
+RISK_COL_APPROVE, RISK_COL_NAME, RISK_COL_APPLIED = "A", "C", "Q"
+# staging column -> JSON key, in column order A..Q (None = left empty)
+RISK_IMPORT_COLS = [None, "B", "C", "D", "E", "F", "G", "H", "I", "J",
+                    "M", "R", "S", "source_rows", "basis_evidence", "confidence", None]
+H_OK = ["1-LOW RISK", "2-MEDIUM RISK", "3-HIGH RISK", "Enabler"]
+I_OK = ["1-NO IMPACT", "2-TO BE COMMUNICATED", "3-MEANINGFUL IMPACT", "NA"]
+J_OK = ["1-LOW HANGING FRUIT", "2-RESOURCES NEEDED", "3-MAJOR EFFORT (PROJECT)", "NA"]
+
+# --- 8. Risks: first free row via column C from row 12 ---
+RISK_TARGET_FIRST_ROW, RISK_TARGET_KEY_COL = 12, "C"
+# staging column -> 8. Risks column
+RISK_APPLY_MAP = {"B": "B", "C": "C", "D": "D", "E": "E", "F": "F", "G": "G",
+                  "H": "H", "I": "I", "J": "J", "K": "M", "L": "R", "M": "S"}
+
+# --- roll-up (K9 is an Excel formula; this is only a read-only check) ---
+ROLLUP_MATURITY_COL = "S"  # ASSUMED: which of S/T/U feeds K9
+CRITICALITY_COL = "D"  # ASSUMED

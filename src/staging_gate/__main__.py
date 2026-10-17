@@ -30,21 +30,23 @@ def main(argv=None):
               + (f"; excluded (no numeric criticality): {', '.join(r['no_weight'])}" if r["no_weight"] else ""))
         return 0
     if a.cmd == "lock":
-        print("locked:", ", ".join(lock(wb)))
+        locked, missing = lock(wb)
+        print(f"Locked {len(locked)} sheet(s)." + (f" Missing (skipped): {', '.join(missing)}." if missing else ""))
     elif a.cmd == "apply":
-        res = apply_approved(wb)
-        print(res.line())
-        for row, why in res.rejected:
-            print(f"  rejected staging row {row}: {why}")
+        try:
+            print(apply_approved(wb).line())
+        except ValueError as e:
+            print(e, file=sys.stderr)
+            return 1
     else:
         try:
             n, rej = import_risks(wb)
         except ValueError as e:
             print(e, file=sys.stderr)
             return 1
-        print(f"{n} risks imported, {len(rej)} rejected")
-        for i, why in rej:
-            print(f"  item {i}: {why}")
+        print(f"Risks imported: {n} | rejected: {len(rej)}")
+        for why in rej:
+            print(f"  - {why}")
     wb.save(a.output or a.workbook)
     return 0
 

@@ -1,130 +1,140 @@
-"""ApplyApproved: write only approved staging rows to live sheets; never silently overwrite."""
-from dataclasses import dataclass, field
+"""ApplyApproved: port of ApplyApproved.ts. Writes only approved staging rows to live sheets."""
+from dataclasses import dataclass
+
+from openpyxl.utils import column_index_from_string as ci
 
 from . import layout as L
-from .lock import relock, unlock
-from .xl import blank, cell, log, now
+from .lock import set_protection
+from .xl import ChangeLog, cell, first_empty_row, num, s, stamp
 
 
 @dataclass
 class Result:
-    controls_applied: int = 0
+    controls: int = 0
     overrides: int = 0
+    risks: int = 0
     conflicts: int = 0
-    rejected: list = field(default_factory=list)
-    risks_applied: int = 0
+    not_found: int = 0
 
     def line(self):
-        return (f"{self.controls_applied} controls applied, {self.overrides} overrides, "
-                f"{self.conflicts} conflicts skipped, {self.risks_applied} risks applied, "
-                f"{len(self.rejected)} rejected")
+        return (f"Controls applied: {self.controls} | overrides: {self.overrides} | "
+                f"risks appended: {self.risks} | conflicts skipped: {self.conflicts} | "
+                f"lookup failures: {self.not_found} -- see ChangeLog.")
 
 
-def _find_row(ws, nr):
-    from openpyxl.utils import column_index_from_string as ci
+def _find_nr(ws, nr):
     for r in range(L.FIRST_ROW, L.LAST_ROW + 1):
-        v = ws.cell(r, ci(L.NR_COL)).value
-        if not blank(v) and str(v).strip() == str(nr).strip():
+        v = cell(ws, L.NR_COL, r).value
+        if s(v) != "" and s(v) == s(nr):
             return r
     return None
 
 
-def _token(v):
-    t = "" if v is None else str(v).strip().lower()
-    return t if t in ("y", "y!") else None
+def _blank(v):
+    return v is None or v == ""
 
 
-def _apply_controls(wb, res):
+def _controls(wb, res, log, now):
     st = wb[L.STAGING]
-    for r in range(L.STAGING_FIRST_ROW, st.max_row + 1):
-        tok = _token(cell(st, L.COL_APPROVE, r).value)
-        stamp = cell(st, L.COL_APPLIED, r).value
-        # 'y' never reapplies a stamped row; 'y!' may correct an applied row once.
-        if not tok or (not blank(stamp) and (tok == "y" or str(stamp).startswith("overridden"))):
+    last = L.STAGING_FIRST_ROW + L.STAGING_ROWS - 1
+    for r in range(L.STAGING_FIRST_ROW, last + 1):
+        approve = s(cell(st, L.COL_APPROVE, r).value).lower()
+        already = s(cell(st, L.COL_STAMP, r).value).lower()
+        override, plain = approve == "y!", approve == "y"
+        if not (override or plain):
             continue
-        sheet, nr = cell(st, L.COL_SHEET, r).value, cell(st, L.COL_NR, r).value
-        if sheet not in wb.sheetnames or sheet in L.WRITABLE:
-            res.rejected.append((r, f"unknown target sheet {sheet!r}"))
-            log(wb, sheet, nr, "", "REJECT - bad sheet", src=r)
+        if plain and already != "":
             continue
-        ws = wb[sheet]
-        tr = _find_row(ws, nr)
+        if override and "overridden" in already:
+            continue
+        sheet_name, nr = s(cell(st, L.COL_SHEET, r).value), cell(st, L.COL_NR, r).value
+        if sheet_name == "" or s(nr) == "":
+            continue
+        ev = s(cell(st, L.COL_EVIDENCE, r).value)
+        conf = s(cell(st, L.COL_CONFIDENCE, r).value)
+        if sheet_name not in wb.sheetnames:
+            log.write("H2", sheet_name, s(nr), "-", "", "", "", "", "SHEET NOT FOUND")
+            res.not_found += 1
+            continue
+        ws = wb[sheet_name]
+        tr = _find_nr(ws, nr)
         if tr is None:
-            res.rejected.append((r, f"nr {nr!r} not found on {sheet}"))
-            log(wb, sheet, nr, "", "REJECT - nr not found", src=r)
+            log.write("H2", sheet_name, s(nr), "-", "", "", "", "", "NR NOT FOUND")
+            res.not_found += 1
             continue
-        proposals = {}
-        bad = None
-        for scol, tcol in L.FIELD_MAP.items():
-            v = cell(st, scol, r).value
-            if blank(v):
+        had_conflict = False
+        for scol, tcol, is_mat in L.CONTROL_MAP:
+            proposed = cell(st, scol, r).value
+            if _blank(proposed):
                 continue
-            if scol == L.MATURITY_STAGING_COL:
+            target = cell(ws, tcol, tr)
+            cur = target.value
+            cur_s = s(cur)
+            if is_mat:
+                clash = (cur_s != "" and cur_s != "0" and num(cur) != 0
+                         and num(cur) != num(proposed))
+            else:
+                clash = cur_s != "" and cur_s != s(proposed)
+            if clash and not override:
+                log.write("H2", sheet_name, s(nr), tcol, cur_s, s(proposed), ev, conf,
+                          "CONFLICT - skipped")
+                had_conflict = True
+                res.conflicts += 1
+                continue
+            if is_mat:
+                n = num(proposed)
                 lo, hi = L.MATURITY_RANGE
-                if isinstance(v, bool) or not isinstance(v, (int, float)) or v != int(v) \
-                        or not lo <= v <= hi:
-                    bad = f"maturity {v!r} not an integer {lo}-{hi}"
-                    break
-                v = int(v)
-            proposals[tcol] = v
-        if bad:
-            res.rejected.append((r, bad))
-            log(wb, sheet, nr, "", f"REJECT - {bad}", src=r)
-            continue
-        unlock(ws)
-        wrote = overrode = False
-        try:
-            for tcol, new in proposals.items():
-                c = cell(ws, tcol, tr)
-                addr, old = f"{tcol}{tr}", c.value
-                if blank(old):
-                    c.value = new
-                    log(wb, sheet, nr, addr, "APPLIED", "", new, r)
-                    wrote = True
-                elif old == new:
-                    log(wb, sheet, nr, addr, "NO-OP - same value", old, new, r)
-                elif tok == "y!":
-                    c.value = new
-                    log(wb, sheet, nr, addr, "OVERRIDE", old, new, r)
-                    wrote = overrode = True
-                    res.overrides += 1
-                else:
-                    log(wb, sheet, nr, addr, "CONFLICT - skipped", old, new, r)
-                    res.conflicts += 1
-        finally:
-            relock(ws)
-        if wrote:
-            stamp = "overridden" if overrode else "applied"
-            cell(st, L.COL_APPLIED, r).value = f"{stamp} {now()}"
-            res.controls_applied += 1
+                if n != n or n < lo or n > hi:
+                    log.write("H2", sheet_name, s(nr), tcol, cur_s, s(proposed), ev, conf,
+                              "REJECTED - not 0-5")
+                    had_conflict = True
+                    continue
+                target.value = int(n) if n.is_integer() else n
+            else:
+                target.value = str(proposed)
+            log.write("H2", sheet_name, s(nr), tcol, cur_s, s(proposed), ev, conf,
+                      "OVERRIDE" if clash else "APPLIED")
+        word = "partial" if had_conflict else ("overridden" if override else "applied")
+        cell(st, L.COL_STAMP, r).value = f"{now} {word}"
+        if not had_conflict:
+            if override:
+                res.overrides += 1
+            else:
+                res.controls += 1
 
 
-def _apply_risks(wb, res):
-    st = wb[L.STAGING_RISKS]
-    if L.RISKS_SHEET not in wb.sheetnames:
+def _risks(wb, res, log, now):
+    if L.STAGING_RISKS not in wb.sheetnames or L.RISKS_SHEET not in wb.sheetnames:
         return
-    ws = wb[L.RISKS_SHEET]
-    from openpyxl.utils import column_index_from_string as ci
-    for r in range(L.RISK_FIRST_ROW, st.max_row + 1):
-        if not _token(cell(st, L.RISK_COL_APPROVE, r).value) \
-                or not blank(cell(st, L.RISK_COL_APPLIED, r).value):
+    sr, risks = wb[L.STAGING_RISKS], wb[L.RISKS_SHEET]
+    nxt = first_empty_row(risks, L.RISK_TARGET_KEY_COL, L.RISK_TARGET_FIRST_ROW)
+    last = L.RISK_STAGING_FIRST_ROW + L.RISK_STAGING_ROWS - 1
+    for r in range(L.RISK_STAGING_FIRST_ROW, last + 1):
+        if s(cell(sr, L.RISK_COL_APPROVE, r).value).lower() != "y":
             continue
-        unlock(ws)
-        try:
-            tr = L.RISK_TARGET_FIRST_ROW
-            while not blank(ws.cell(tr, ci(L.RISK_TARGET_KEY_COL)).value):
-                tr += 1
-            for scol, tcol in L.RISK_TARGET_COLS.items():
-                cell(ws, tcol, tr).value = cell(st, scol, r).value
-        finally:
-            relock(ws)
-        log(wb, L.RISKS_SHEET, "", f"row {tr}", "APPLIED (risk)", "", cell(st, "C", r).value, r)
-        cell(st, L.RISK_COL_APPLIED, r).value = f"applied {now()}"
-        res.risks_applied += 1
+        if s(cell(sr, L.RISK_COL_APPLIED, r).value) != "":
+            continue
+        if s(cell(sr, L.RISK_COL_NAME, r).value) == "":
+            continue
+        for scol, tcol in L.RISK_APPLY_MAP.items():
+            cell(risks, tcol, nxt).value = cell(sr, scol, r).value
+        log.write("H3", L.RISKS_SHEET, f"row {nxt}", "B-J,M,R,S", "",
+                  s(cell(sr, L.RISK_COL_NAME, r).value), "", s(cell(sr, "P", r).value), "APPLIED")
+        cell(sr, L.RISK_COL_APPLIED, r).value = f"{now} applied"
+        nxt += 1
+        res.risks += 1
 
 
 def apply_approved(wb) -> Result:
-    res = Result()
-    _apply_controls(wb, res)
-    _apply_risks(wb, res)
+    if L.CHANGELOG not in wb.sheetnames:
+        raise ValueError("ChangeLog sheet missing - aborting.")
+    res, now = Result(), stamp()
+    set_protection(wb, L.LOCKED_SHEETS, False)
+    try:
+        log = ChangeLog(wb, now)
+        if L.STAGING in wb.sheetnames:
+            _controls(wb, res, log, now)
+        _risks(wb, res, log, now)
+    finally:
+        set_protection(wb, L.LOCKED_SHEETS, True)
     return res
