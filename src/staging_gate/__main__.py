@@ -1,27 +1,53 @@
 import argparse
+import json
 import sys
+from pathlib import Path
 
 from . import layout as L
 from .apply import apply_approved
+from .controls import read_controls
+from .evidence import load_register
+from .guard import guard_h2
+from .h2 import write_staging
 from .lock import lock
 from .risks import import_risks
 from .rollup import rollup
+from .runner import (DEFAULT_MODEL, call_model, existing_risk_names, extract_system_prompt,
+                     first_json, h2_user_prompt, h3_user_prompt)
 from .xl import open_wb
 
 
+def _client():
+    import anthropic  # needs ANTHROPIC_API_KEY (or an `ant auth login` profile)
+    return anthropic.Anthropic()
+
+
+def _model_args(s):
+    s.add_argument("--prompt", required=True, help="the H2/H3 .md file containing '## System prompt'")
+    s.add_argument("--profile", required=True, help="approved Company Profile .md")
+    s.add_argument("--model", default=DEFAULT_MODEL)
+    s.add_argument("--no-fallbacks", action="store_true")
+
+
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="staging_gate", description=__doc__)
+    p = argparse.ArgumentParser(prog="staging_gate")
     sub = p.add_subparsers(dest="cmd", required=True)
     for name, h in [("lock", "protect all live sheets"), ("apply", "apply approved staging rows"),
                     ("import-risks", f"import JSON from {L.STAGING_RISKS}!{L.RISK_JSON_CELL}"),
-                    ("rollup", "print the weighted roll-up for a sheet")]:
+                    ("rollup", "print the weighted roll-up for a sheet"),
+                    ("h2", "run H2 on sheets 1-6 and write guarded proposals to Staging"),
+                    ("h3", "run H3 and write its JSON into Staging-Risks")]:
         s = sub.add_parser(name, help=h)
         s.add_argument("workbook")
         if name == "rollup":
             s.add_argument("sheet")
         else:
-            s.add_argument("-o", "--output", help="save here instead of overwriting the input "
-                           "(recommended: run on a scratch copy)")
+            s.add_argument("-o", "--output", help="save here instead of overwriting (use a scratch copy)")
+        if name == "h2":
+            _model_args(s)
+            s.add_argument("--evidence", required=True, help="Evidence Register (.csv or markdown table)")
+        if name == "h3":
+            _model_args(s)
     a = p.parse_args(argv)
     wb = open_wb(a.workbook)
     if a.cmd == "rollup":
@@ -29,24 +55,42 @@ def main(argv=None):
         print(f"{r['value']:.2f} from rows {', '.join(r['rows']) or '-'}"
               + (f"; excluded (no numeric criticality): {', '.join(r['no_weight'])}" if r["no_weight"] else ""))
         return 0
-    if a.cmd == "lock":
-        locked, missing = lock(wb)
-        print(f"Locked {len(locked)} sheet(s)." + (f" Missing (skipped): {', '.join(missing)}." if missing else ""))
-    elif a.cmd == "apply":
-        try:
+    try:
+        if a.cmd == "lock":
+            locked, missing = lock(wb)
+            print(f"Locked {len(locked)} sheet(s)." + (f" Missing (skipped): {', '.join(missing)}." if missing else ""))
+        elif a.cmd == "apply":
             print(apply_approved(wb).line())
-        except ValueError as e:
-            print(e, file=sys.stderr)
-            return 1
-    else:
-        try:
+        elif a.cmd == "import-risks":
             n, rej = import_risks(wb)
-        except ValueError as e:
-            print(e, file=sys.stderr)
-            return 1
-        print(f"Risks imported: {n} | rejected: {len(rej)}")
-        for why in rej:
-            print(f"  - {why}")
+            print(f"Risks imported: {n} | rejected: {len(rej)}")
+            for why in rej:
+                print(f"  - {why}")
+        elif a.cmd == "h2":
+            profile = Path(a.profile).read_text(encoding="utf-8")
+            reg_text = Path(a.evidence).read_text(encoding="utf-8")
+            system = extract_system_prompt(Path(a.prompt).read_text(encoding="utf-8"))
+            controls = read_controls(wb)
+            out = call_model(_client(), system, h2_user_prompt(profile, reg_text, controls),
+                             a.model, not a.no_fallbacks)
+            result, notes = guard_h2(first_json(out, "{"), controls, load_register(a.evidence))
+            n = write_staging(wb, result)
+            print(f"{n} proposals written to Staging; {len(result['not_scored'])} not scored; "
+                  f"{len(notes)} guard changes")
+            for x in notes:
+                print("  guard:", x)
+        elif a.cmd == "h3":
+            profile = Path(a.profile).read_text(encoding="utf-8")
+            system = extract_system_prompt(Path(a.prompt).read_text(encoding="utf-8"))
+            out = call_model(_client(), system, h3_user_prompt(profile, read_controls(wb), existing_risk_names(wb)),
+                             a.model, not a.no_fallbacks)
+            n, rej = import_risks(wb, json.dumps(first_json(out, "[")))
+            print(f"Risks imported: {n} | rejected: {len(rej)}")
+            for why in rej:
+                print(f"  - {why}")
+    except (ValueError, RuntimeError) as e:
+        print(e, file=sys.stderr)
+        return 1
     wb.save(a.output or a.workbook)
     return 0
 

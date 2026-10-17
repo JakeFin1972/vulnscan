@@ -52,3 +52,13 @@ RISK_APPLY_MAP = {"B": "B", "C": "C", "D": "D", "E": "E", "F": "F", "G": "G",
 # --- roll-up (K9 is an Excel formula; this is only a read-only check) ---
 ROLLUP_MATURITY_COL = "S"  # ASSUMED: which of S/T/U feeds K9
 CRITICALITY_COL = "D"  # ASSUMED
+
+# --- H2 helper (from 02_H2 output contract + architecture doc write-back contract) ---
+CONTROL_SHEETS = ["1.Govern", "2. Identify", "3. Protect", "4. DETECT", "5. RESPOND", "6. RECOVER"]
+CTRL_TOPIC_COL, CTRL_QUESTION_COL, CTRL_CRIT_COL, CTRL_NIST_COL = "C", "D", "H", "N"
+CTRL_CURRENT_STATE_COL = "F"
+# Staging column that receives each H2 JSON field. D, M, N are lookups; A, O belong to the human/script.
+# E..I and K, L are fixed by ApplyApproved.ts; J (rationale + flags) is ASSUMED.
+H2_STAGING_COLS = {"F": "E", "G": "F", "S": "G", "T_proposed": "H", "U_proposed": "I",
+                   "rationale": "J", "evidence": "K", "confidence": "L"}
+RISKS_NAME_COL = "C"  # existing risk names on 8. Risks (ApplyApproved.ts uses column C)
