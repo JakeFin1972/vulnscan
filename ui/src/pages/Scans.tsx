@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router-dom'
-import { RotateCcw, Loader2, Plus, ExternalLink, Sparkles, ChevronDown, ChevronUp, FileText, Upload, X, File as FileIcon } from 'lucide-react'
-import { listScans, startScan, uploadScan, aiBoostScan, aiBoostAll, aiGenerateReport } from '@/api'
+import { RotateCcw, Loader2, Plus, Square, ExternalLink, Sparkles, ChevronDown, ChevronUp, FileText, Upload, X, File as FileIcon } from 'lucide-react'
+import { listScans, startScan, uploadScan, cancelScan, aiBoostScan, aiBoostAll, aiGenerateReport } from '@/api'
 import type { AiBoostResponse, AiBoostAllResult, AiReport } from '@/api'
 import StatusBadge from '@/components/StatusBadge'
 import type { Scan } from '@/types'
@@ -50,6 +50,13 @@ function ScanRow({
     mutationFn: () => aiBoostScan(s.id),
     onSuccess: (r: AiBoostResponse) => { setBoostResult(r); setBoostOpen(true) },
   })
+
+  const qcRow = useQueryClient()
+  const stopMut = useMutation({
+    mutationFn: () => cancelScan(s.id),
+    onSettled: () => qcRow.invalidateQueries({ queryKey: ['scans'] }),
+  })
+  const active = s.status === 'pending' || s.status === 'running' || s.status === 'cancelling'
 
   const reportMut = useMutation({
     mutationFn: () => aiGenerateReport(s.id),
@@ -118,9 +125,20 @@ function ScanRow({
                   : <ChevronDown className="h-3 w-3" />)}
               </button>
             )}
+            {active && (
+              <button
+                onClick={() => stopMut.mutate()}
+                disabled={stopMut.isPending || s.status === 'cancelling'}
+                title="Stop this scan"
+                className="flex items-center gap-1 px-2 py-1 rounded border border-red-800 text-red-400 hover:bg-red-900/20 text-xs font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <Square className="h-3 w-3" />
+                {s.status === 'cancelling' || stopMut.isPending ? 'Stopping…' : 'Stop'}
+              </button>
+            )}
             <button
               onClick={() => onRescanClick(s)}
-              disabled={rescanning || s.status === 'pending' || s.status === 'running'}
+              disabled={rescanning || active}
               title={confirming ? 'Click again to confirm rescan' : 'Re-run scan'}
               className={`flex items-center gap-1 px-2 py-1 rounded border text-xs font-medium transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${
                 confirming

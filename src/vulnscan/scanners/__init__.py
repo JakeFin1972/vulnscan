@@ -44,6 +44,7 @@ def run_dynamic_scan(
     target_type: TargetType,
     tools: list[ScanTool] | None = None,
     options: dict | None = None,
+    should_stop=None,
 ) -> list[DynamicFinding]:
     """Run the requested tools against `target` and aggregate findings.
 
@@ -69,6 +70,9 @@ def run_dynamic_scan(
     host_only, target_port = _target_to_host_port(target, target_type)
 
     for tool in tools:
+        if should_stop and should_stop():  # checked between tools; a running tool finishes first
+            from ..cancel import ScanCancelled
+            raise ScanCancelled()
         tool_opts = opts.get(tool, {})
 
         if tool == "nmap":

@@ -1,4 +1,4 @@
-export type ScanStatus = 'pending' | 'running' | 'done' | 'error'
+export type ScanStatus = 'pending' | 'running' | 'cancelling' | 'cancelled' | 'done' | 'error'
 export type Severity = 'critical' | 'high' | 'medium' | 'low' | 'info'
 
 export interface Scan {
@@ -68,7 +68,7 @@ export interface HealthStatus {
 }
 
 export type TargetType = 'url' | 'host' | 'mcp'
-export type DynamicScanStatus = 'pending' | 'running' | 'done' | 'error'
+export type DynamicScanStatus = 'pending' | 'running' | 'cancelling' | 'cancelled' | 'done' | 'error'
 export type ScanTool = 'nmap' | 'http' | 'api' | 'zap' | 'openvas' | 'mcp' | 'nuclei' | 'sslyze' | 'subfinder' | 'nikto'
 
 export interface DynamicScan {

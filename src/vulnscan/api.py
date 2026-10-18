@@ -4,6 +4,7 @@ Endpoints:
   POST   /scans                 start recon+scan on an authorized path
   GET    /scans                 list all scans (history)
   GET    /scans/{id}            scan status + report
+  POST   /scans/{id}/cancel     stop a queued or running scan (also /dynamic-scans/{id}/cancel)
   GET    /findings              findings, optionally filtered by scan_id
   GET    /languages             list all language definition backends
   GET    /languages/{name}      single language def with YAML source
@@ -53,6 +54,7 @@ from .harness import run_test
 from .languages.generic_backend import load_backends_from_defs, YamlBackend
 from .languages.yaml_loader import load_yaml_def, YamlDefinitionError
 from .recon import build_report
+from . import cancel
 from .scanners import run_dynamic_scan, tool_status
 from .scanners.base import DynamicFinding as _DynFinding
 
@@ -73,6 +75,17 @@ def _db() -> sqlite3.Connection:
     conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     return conn
+
+
+def _reset_interrupted_scans() -> None:
+    """A scan left pending/running/cancelling by a stopped server can never finish: mark it cancelled."""
+    with _db() as conn:
+        for table in ("scans", "dynamic_scans"):
+            conn.execute(
+                f"UPDATE {table} SET status='cancelled', finished_at=datetime('now'), "
+                "error=COALESCE(error, 'interrupted: the server stopped while this scan was running') "
+                "WHERE status IN ('pending','running','cancelling')"
+            )
 
 
 def _init_db() -> None:
@@ -243,14 +256,25 @@ def _severity(category: str) -> str:
 
 # ── Background scan task ───────────────────────────────────────────────────────
 
+def _mark_cancelled(conn: sqlite3.Connection, table: str, scan_id: str) -> None:
+    conn.rollback()  # drop anything the scan had half-written
+    conn.execute(
+        f"UPDATE {table} SET status='cancelled', finished_at=datetime('now') WHERE id=?", (scan_id,)
+    )
+    conn.commit()
+
+
 def _run_scan(scan_id: str, path_str: str) -> None:
     conn = _db()
     try:
+        if cancel.is_requested(scan_id):  # stopped while still queued
+            _mark_cancelled(conn, "scans", scan_id)
+            return
         conn.execute("UPDATE scans SET status='running' WHERE id=?", (scan_id,))
         conn.commit()
 
         root = Path(path_str)
-        report = build_report(root)
+        report = build_report(root, cancel.checker(scan_id))
 
         sources = report["sources"]
         sinks   = report["sinks"]
@@ -295,6 +319,8 @@ def _run_scan(scan_id: str, path_str: str) -> None:
         """, (len(sources), len(sinks), len(pairs),
               json.dumps(report), scan_id))
         conn.commit()
+    except cancel.ScanCancelled:
+        _mark_cancelled(conn, "scans", scan_id)
     except Exception as exc:  # noqa: BLE001
         conn.execute(
             "UPDATE scans SET status='error', error=?, finished_at=datetime('now') WHERE id=?",
@@ -303,6 +329,7 @@ def _run_scan(scan_id: str, path_str: str) -> None:
         conn.commit()
         raise
     finally:
+        cancel.clear(scan_id)
         conn.close()
 
 
@@ -344,6 +371,7 @@ def _reload_registry() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     _init_db()
+    _reset_interrupted_scans()
     yield
 
 
@@ -430,6 +458,7 @@ def start_scan(req: StartScanRequest, bg: BackgroundTasks):
             "INSERT INTO scans (id, path, status) VALUES (?, ?, 'pending')",
             (scan_id, str(root.resolve()))
         )
+    cancel.register(scan_id)
     bg.add_task(_run_scan, scan_id, str(root.resolve()))
     return {"id": scan_id}
 
@@ -462,6 +491,7 @@ async def upload_scan(
             "INSERT INTO scans (id, path, status) VALUES (?, ?, 'pending')",
             (scan_id, str(tmp_dir))
         )
+    cancel.register(scan_id)
     bg.add_task(_run_scan, scan_id, str(tmp_dir))
     return {"id": scan_id, "path": str(tmp_dir), "files": saved}
 
@@ -475,6 +505,35 @@ def list_scans():
             "FROM scans ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _cancel(table: str, scan_id: str) -> dict:
+    with _db() as conn:
+        row = conn.execute(f"SELECT status FROM {table} WHERE id=?", (scan_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Scan not found")
+        status = row["status"]
+        if status not in ("pending", "running", "cancelling"):
+            raise HTTPException(status_code=409, detail=f"Scan is already {status}")
+        cancel.request(scan_id)
+        # Queued scans stop at once; a running scan stops at its next checkpoint.
+        new = "cancelled" if status == "pending" else "cancelling"
+        conn.execute(
+            f"UPDATE {table} SET status=?, finished_at=CASE WHEN ?='cancelled' THEN datetime('now') ELSE finished_at END "
+            "WHERE id=? AND status IN ('pending','running','cancelling')",
+            (new, new, scan_id),
+        )
+    return {"id": scan_id, "status": new}
+
+
+@app.post("/scans/{scan_id}/cancel")
+def cancel_scan(scan_id: str):
+    return _cancel("scans", scan_id)
+
+
+@app.post("/dynamic-scans/{scan_id}/cancel")
+def cancel_dynamic_scan(scan_id: str):
+    return _cancel("dynamic_scans", scan_id)
 
 
 @app.get("/scans/{scan_id}")
@@ -735,6 +794,9 @@ def _run_dynamic_scan(
 ) -> None:
     conn = _db()
     try:
+        if cancel.is_requested(scan_id):  # stopped while still queued
+            _mark_cancelled(conn, "dynamic_scans", scan_id)
+            return
         conn.execute("UPDATE dynamic_scans SET status='running' WHERE id=?", (scan_id,))
         conn.commit()
 
@@ -743,6 +805,7 @@ def _run_dynamic_scan(
             target_type=target_type,  # type: ignore[arg-type]
             tools=tools,  # type: ignore[arg-type]
             options=options,
+            should_stop=cancel.checker(scan_id),
         )
 
         _persist_dynamic_findings(conn, scan_id, findings)
@@ -751,6 +814,8 @@ def _run_dynamic_scan(
             (len(findings), scan_id),
         )
         conn.commit()
+    except cancel.ScanCancelled:
+        _mark_cancelled(conn, "dynamic_scans", scan_id)
     except Exception as exc:  # noqa: BLE001
         conn.execute(
             "UPDATE dynamic_scans SET status='error', error=?, finished_at=datetime('now') WHERE id=?",
@@ -759,6 +824,7 @@ def _run_dynamic_scan(
         conn.commit()
         raise
     finally:
+        cancel.clear(scan_id)
         conn.close()
 
 
@@ -771,6 +837,7 @@ def start_dynamic_scan(req: DynamicScanRequest, bg: BackgroundTasks):
             "INSERT INTO dynamic_scans (id, target, target_type, tools, status) VALUES (?,?,?,?,'pending')",
             (scan_id, req.target, req.target_type, tools_json),
         )
+    cancel.register(scan_id)
     bg.add_task(
         _run_dynamic_scan,
         scan_id, req.target, req.target_type, req.tools, req.options,

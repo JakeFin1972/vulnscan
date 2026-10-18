@@ -30,9 +30,23 @@ _SKIP_DIRS = {".venv", "venv", "node_modules", ".git", "__pycache__",
               "bin", "obj", "packages"}
 
 
-def scan_repo(root: Path) -> list[Hit]:
+def scan_repo(root: Path, should_stop=None) -> list[Hit]:
+    """`should_stop` is an optional zero-argument callable; when it returns True the scan raises
+    ScanCancelled (checked while listing files and before each file)."""
+    from .cancel import ScanCancelled
+
+    def check():
+        if should_stop and should_stop():
+            raise ScanCancelled()
+
+    paths = []
+    for i, path in enumerate(root.rglob("*")):
+        if i % 500 == 0:
+            check()
+        paths.append(path)
     hits: list[Hit] = []
-    for path in sorted(root.rglob("*")):
+    for path in sorted(paths):
+        check()
         if path.suffix not in SUPPORTED_EXTENSIONS or not path.is_file():
             continue
         if any(part in _SKIP_DIRS for part in path.parts):
@@ -69,8 +83,8 @@ def pair_candidates(hits: list[Hit]) -> list[dict]:
     return pairs
 
 
-def build_report(root: Path) -> dict:
-    hits = scan_repo(root)
+def build_report(root: Path, should_stop=None) -> dict:
+    hits = scan_repo(root, should_stop)
     sources = [asdict(h) for h in hits if h.kind == "source"]
     sinks = [asdict(h) for h in hits if h.kind == "sink"]
     by_lang: dict[str, int] = {}

@@ -6,6 +6,7 @@ import {
   Server,
   Cpu,
   Play,
+  Square,
   RefreshCw,
   ChevronDown,
   ChevronUp,
@@ -19,6 +20,7 @@ import {
   listScanners,
   startDynamicScan,
   listDynamicScans,
+  cancelDynamicScan,
   getDynamicScan,
   listDynamicFindings,
   easmIngestScan,
@@ -58,6 +60,8 @@ function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     pending: 'text-slate-400 bg-slate-800',
     running: 'text-teal-400 bg-teal-900/40 animate-pulse',
+    cancelling: 'text-amber-400 bg-amber-900/40 animate-pulse',
+    cancelled: 'text-slate-400 bg-slate-800',
     done:    'text-green-400 bg-green-900/40',
     error:   'text-red-400 bg-red-900/40',
   }
@@ -280,13 +284,18 @@ function ScanRow({
   onClick,
   onRescan,
   rescanning,
+  onStop,
+  stopping,
 }: {
   scan: DynamicScan
   selected: boolean
   onClick: () => void
   onRescan: () => void
   rescanning: boolean
+  onStop: () => void
+  stopping: boolean
 }) {
+  const active = scan.status === 'pending' || scan.status === 'running' || scan.status === 'cancelling'
   return (
     <div
       className={cn(
@@ -311,9 +320,20 @@ function ScanRow({
           </div>
         </div>
       </button>
+      {active && (
+        <button
+          onClick={e => { e.stopPropagation(); onStop() }}
+          disabled={stopping || scan.status === 'cancelling'}
+          title="Stop this scan"
+          className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded border border-red-800 text-red-400 hover:bg-red-900/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-xs"
+        >
+          <Square className="h-3 w-3" />
+          {stopping || scan.status === 'cancelling' ? 'Stopping…' : 'Stop'}
+        </button>
+      )}
       <button
         onClick={e => { e.stopPropagation(); onRescan() }}
-        disabled={rescanning || scan.status === 'pending' || scan.status === 'running'}
+        disabled={rescanning || active}
         title="Re-run this scan"
         className="flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded border border-slate-700 text-slate-400 hover:border-teal-600 hover:text-teal-400 hover:bg-teal-900/20 disabled:opacity-30 disabled:cursor-not-allowed transition-colors text-xs"
       >
@@ -392,6 +412,8 @@ export default function DynamicScanPage() {
     queryKey: ['dynamic-scans'],
     queryFn: listDynamicScans,
     staleTime: 5_000,
+    refetchInterval: (query) =>
+      query.state.data?.some(s => s.status === 'pending' || s.status === 'running' || s.status === 'cancelling') ? 2000 : false,
   })
 
   const { data: activeScan } = useQuery({
@@ -400,7 +422,7 @@ export default function DynamicScanPage() {
     enabled: !!activeScanId,
     refetchInterval: (query) => {
       const s = query.state.data?.status
-      return s === 'pending' || s === 'running' ? 1500 : false
+      return s === 'pending' || s === 'running' || s === 'cancelling' ? 1500 : false
     },
   })
 
@@ -411,12 +433,12 @@ export default function DynamicScanPage() {
         scan_id: activeScanId!,
         severity: sevFilter || undefined,
       }),
-    enabled: !!activeScanId && (activeScan?.status === 'done' || activeScan?.status === 'error'),
+    enabled: !!activeScanId && (activeScan?.status === 'done' || activeScan?.status === 'error' || activeScan?.status === 'cancelled'),
   })
 
   // Refetch scan list when active scan finishes
   useEffect(() => {
-    if (activeScan?.status === 'done' || activeScan?.status === 'error') {
+    if (activeScan?.status === 'done' || activeScan?.status === 'error' || activeScan?.status === 'cancelled') {
       refetchScans()
     }
   }, [activeScan?.status, refetchScans])
@@ -450,6 +472,14 @@ export default function DynamicScanPage() {
       setRescanningId(null)
     },
     onError: () => setRescanningId(null),
+  })
+
+  const stopMutation = useMutation({
+    mutationFn: (id: string) => cancelDynamicScan(id),
+    onSettled: (_d, _e, id) => {
+      qc.invalidateQueries({ queryKey: ['dynamic-scans'] })
+      qc.invalidateQueries({ queryKey: ['dynamic-scan', id] })
+    },
   })
 
   function handleRescan(prev: DynamicScan) {
@@ -602,6 +632,8 @@ export default function DynamicScanPage() {
               onClick={() => setActiveScanId(scan.id)}
               onRescan={() => handleRescan(scan)}
               rescanning={rescanningId === scan.id}
+              onStop={() => stopMutation.mutate(scan.id)}
+              stopping={stopMutation.isPending && stopMutation.variables === scan.id}
             />
           ))}
         </div>
@@ -623,8 +655,18 @@ export default function DynamicScanPage() {
                   <TargetIcon type={activeScan.target_type} />
                   <span className="font-mono text-sm text-slate-200">{activeScan.target}</span>
                   <StatusBadge status={activeScan.status} />
-                  {activeScan.status === 'running' && (
+                  {(activeScan.status === 'running' || activeScan.status === 'cancelling') && (
                     <RefreshCw className="h-3.5 w-3.5 text-teal-500 animate-spin" />
+                  )}
+                  {(activeScan.status === 'pending' || activeScan.status === 'running' || activeScan.status === 'cancelling') && (
+                    <button
+                      onClick={() => stopMutation.mutate(activeScan.id)}
+                      disabled={stopMutation.isPending || activeScan.status === 'cancelling'}
+                      className="flex items-center gap-1 px-2 py-1 rounded border border-red-800 text-red-400 hover:bg-red-900/20 text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <Square className="h-3 w-3" />
+                      {activeScan.status === 'cancelling' ? 'Stopping…' : 'Stop scan'}
+                    </button>
                   )}
                   {activeScan.status === 'done' && (
                     <span className="text-xs text-slate-400">{activeScan.finding_count} finding{activeScan.finding_count !== 1 ? 's' : ''}</span>
@@ -680,6 +722,15 @@ export default function DynamicScanPage() {
                 <RefreshCw className="h-4 w-4 animate-spin text-teal-500" />
                 Scan in progress — results will appear when complete…
               </div>
+            )}
+            {activeScan?.status === 'cancelling' && (
+              <div className="flex items-center gap-2 py-6 text-amber-400 text-sm">
+                <RefreshCw className="h-4 w-4 animate-spin" />
+                Stopping — the tool that is running right now has to finish first…
+              </div>
+            )}
+            {activeScan?.status === 'cancelled' && (
+              <div className="py-6 text-slate-500 text-sm">Scan was cancelled.</div>
             )}
             {activeScan?.status === 'pending' && (
               <div className="flex items-center gap-2 py-6 text-slate-500 text-sm">

@@ -5,6 +5,8 @@ import { Loader2 } from 'lucide-react'
 const MAP: Record<ScanStatus, { label: string; cls: string; spin?: boolean }> = {
   pending: { label: 'Pending', cls: 'bg-slate-700/50 text-slate-400 border-slate-600' },
   running: { label: 'Running', cls: 'bg-blue-500/15 text-blue-400 border-blue-500/30', spin: true },
+  cancelling: { label: 'Stopping', cls: 'bg-amber-500/15 text-amber-400 border-amber-500/30', spin: true },
+  cancelled:  { label: 'Cancelled', cls: 'bg-slate-700/50 text-slate-400 border-slate-600' },
   done:    { label: 'Done',    cls: 'bg-teal-500/15 text-teal-400 border-teal-500/30' },
   error:   { label: 'Error',   cls: 'bg-red-500/15 text-red-400 border-red-500/30' },
 }

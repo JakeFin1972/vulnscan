@@ -239,6 +239,12 @@ export const startDynamicScan = (
     options,
   })
 
+export const cancelScan = (id: string) =>
+  request<{ id: string; status: string }>('POST', `/scans/${id}/cancel`)
+
+export const cancelDynamicScan = (id: string) =>
+  request<{ id: string; status: string }>('POST', `/dynamic-scans/${id}/cancel`)
+
 export const listDynamicScans = () =>
   request<DynamicScan[]>('GET', '/dynamic-scans')
 
