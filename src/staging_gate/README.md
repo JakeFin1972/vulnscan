@@ -25,6 +25,9 @@ values until Excel recalculates. Sheet protection uses Excel's SHA-512 scheme an
 
 ## Local web app
 
+On a Mac, double-click `launch_staging_gate.command` in the repo folder (or run `./launch_staging_gate.command`): it sets up
+a private `.venv`, asks for the workbook (drag the file into the window), picks a free port and opens the browser.
+
 `serve` opens a page on your own machine (127.0.0.1 only; Host header and a per-run token are checked):
 Overview (roll-ups, lock status), Staging (approve y / y! / n, add a proposal by hand), Risks, Run H2 / H3,
 ChangeLog. Every apply saves the workbook through one lock and makes a backup copy
