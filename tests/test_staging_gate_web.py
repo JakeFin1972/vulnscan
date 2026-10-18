@@ -118,3 +118,11 @@ def test_job_error_is_reported_not_fatal(srv):
     j = wait_job(srv)
     assert j["state"] == "error" and "no key" in j["error"]
     assert call(srv, "GET", "/api/state")[0] == 200
+
+
+def test_head_and_bad_host_message(srv):
+    c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=10)
+    c.request("HEAD", "/", headers={"Host": f"127.0.0.1:{srv.port}"})
+    assert c.getresponse().status == 200
+    code, body = call(srv, "GET", "/", host="somewhere.example:9")
+    assert code == 403 and "somewhere.example" in body["error"] and "localhost" in body["error"]

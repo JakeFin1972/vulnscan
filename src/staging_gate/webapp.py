@@ -250,12 +250,19 @@ def make_handler(app: App, port_ref):
             self.end_headers()
             self.wfile.write(data)
 
+        def do_HEAD(self):  # health checks / curl -I
+            self.send_response(200 if self._host_ok() else 403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
         def _host_ok(self):
             return self.headers.get("Host", "") in (f"localhost:{port_ref[0]}", f"127.0.0.1:{port_ref[0]}")
 
         def _guard(self):
             if not self._host_ok():
-                self._send(403, {"error": "bad host"})
+                seen = self.headers.get("Host", "")
+                self._send(403, {"error": f"bad host {seen!r}: open http://localhost:{port_ref[0]}/ or "
+                                          f"http://127.0.0.1:{port_ref[0]}/ on the machine running the server"})
                 return False
             if self.path.startswith("/api/") and self.headers.get("X-Token") != app.token:
                 self._send(401, {"error": "missing or wrong token"})
