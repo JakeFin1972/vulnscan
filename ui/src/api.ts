@@ -17,14 +17,12 @@ import type {
   ValidationResult,
 } from './types'
 
+// Vite dev server (npm run dev) talks to a separately running API; a production build is served by
+// the same FastAPI process, so it uses same-origin relative URLs (works from localhost and 127.0.0.1).
+export const DEFAULT_API_URL = import.meta.env.DEV ? 'http://localhost:8765' : ''
+
 function getBaseUrl(): string {
-  const stored = localStorage.getItem('vulnscan_api_url')
-  if (stored) return stored
-  // In production the UI is served by the same FastAPI process — use relative URLs
-  if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-    return ''
-  }
-  return 'http://localhost:8765'
+  return localStorage.getItem('vulnscan_api_url') ?? DEFAULT_API_URL
 }
 
 async function request<T>(
@@ -64,7 +62,7 @@ export const startScan = (path: string) =>
 export const uploadScan = async (files: File[]): Promise<{ id: string; path: string; files: string[] }> => {
   const form = new FormData()
   files.forEach(f => form.append('files', f))
-  const url = `${localStorage.getItem('vulnscan_api_url') ?? 'http://localhost:8765'}/scans/upload`
+  const url = `${getBaseUrl()}/scans/upload`
   const res = await fetch(url, { method: 'POST', body: form })
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { detail?: string }
@@ -332,7 +330,7 @@ export const easmIngest = async (
   if (label) form.append('label', label)
   if (toolHint) form.append('tool_hint', toolHint)
 
-  const url = `${localStorage.getItem('vulnscan_api_url') ?? 'http://localhost:8765'}/easm/ingest`
+  const url = `${getBaseUrl()}/easm/ingest`
   const res = await fetch(url, { method: 'POST', body: form })
   if (!res.ok) {
     const err = await res.json().catch(() => ({})) as { detail?: string }

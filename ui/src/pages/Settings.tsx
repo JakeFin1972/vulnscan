@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Save, Plus, Trash2, CheckCircle, XCircle, Loader2, RefreshCw, Sparkles, Eye, EyeOff } from 'lucide-react'
-import { health, aiStatus } from '@/api'
+import { health, aiStatus, DEFAULT_API_URL } from '@/api'
 
 const API_URL_KEY = 'vulnscan_api_url'
 const PATHS_KEY = 'vulnscan_authorized_paths'
@@ -74,7 +74,7 @@ function ScannerDot({ available, loading }: { available?: boolean; loading: bool
 
 export default function Settings() {
   const [apiUrl, setApiUrl] = useState(
-    localStorage.getItem(API_URL_KEY) ?? 'http://localhost:8765'
+    localStorage.getItem(API_URL_KEY) ?? (DEFAULT_API_URL || window.location.origin)
   )
   const [saved, setSaved] = useState(false)
   const [paths, setPaths] = useState<string[]>(loadPaths)
