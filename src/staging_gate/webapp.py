@@ -314,8 +314,12 @@ def make_server(path, port=8780, client_factory=None):
 
 def serve(path, port=8780, open_browser=False):
     srv, app = make_server(path, port)
-    url = f"http://localhost:{srv.server_address[1]}/"
-    print(f"Staging gate for {Path(path).name} -> {url}   (Ctrl+C to stop)")
+    port = srv.server_address[1]
+    url = f"http://localhost:{port}/"
+    print(f"Staging gate for {Path(path).name} is running.")
+    print(f"  open  {url}")
+    print(f"  or    http://127.0.0.1:{port}/   (use this one if localhost does not load)")
+    print("Leave this window open; Ctrl+C stops it.")
     if app.store.excel_open():
         print("WARNING: Excel seems to have this file open. Close it before applying changes.")
     if open_browser:
