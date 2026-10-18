@@ -110,3 +110,13 @@ def test_call_model_request_shape_and_stop_handling():
         call_model(FakeClient(stop="refusal"), "s", "u")
     with pytest.raises(RuntimeError, match="max_tokens"):
         call_model(FakeClient(stop="max_tokens"), "s", "u")
+
+
+def test_read_controls_sheet_filter():
+    import pytest as _p
+    from staging_gate.controls import read_controls
+    wb = make_wb()
+    assert {c["sheet"] for c in read_controls(wb)} == {DETECT}
+    assert read_controls(wb, ["1.Govern"]) == []
+    with _p.raises(ValueError, match="not a control sheet"):
+        read_controls(wb, ["Nope"])

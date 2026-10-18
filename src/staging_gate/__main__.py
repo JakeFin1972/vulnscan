@@ -27,6 +27,7 @@ def _model_args(s):
     s.add_argument("--profile", required=True, help="approved Company Profile .md")
     s.add_argument("--model", default=DEFAULT_MODEL)
     s.add_argument("--no-fallbacks", action="store_true")
+    s.add_argument("--sheets", nargs="+", metavar="SHEET", help='only these control sheets, e.g. --sheets "4. DETECT"')
 
 
 def _review_cmds(sub):
@@ -99,7 +100,7 @@ def main(argv=None):
             profile = Path(a.profile).read_text(encoding="utf-8")
             reg_text = Path(a.evidence).read_text(encoding="utf-8")
             system = extract_system_prompt(Path(a.prompt).read_text(encoding="utf-8"))
-            controls = read_controls(wb)
+            controls = read_controls(wb, a.sheets)
             out = call_model(_client(), system, h2_user_prompt(profile, reg_text, controls),
                              a.model, not a.no_fallbacks)
             result, notes = guard_h2(first_json(out, "{"), controls, load_register(a.evidence))
@@ -119,7 +120,7 @@ def main(argv=None):
         elif a.cmd == "h3":
             profile = Path(a.profile).read_text(encoding="utf-8")
             system = extract_system_prompt(Path(a.prompt).read_text(encoding="utf-8"))
-            out = call_model(_client(), system, h3_user_prompt(profile, read_controls(wb), existing_risk_names(wb)),
+            out = call_model(_client(), system, h3_user_prompt(profile, read_controls(wb, a.sheets), existing_risk_names(wb)),
                              a.model, not a.no_fallbacks)
             n, rej = import_risks(wb, json.dumps(first_json(out, "[")))
             print(f"Risks imported: {n} | rejected: {len(rej)}")

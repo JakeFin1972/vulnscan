@@ -7,9 +7,13 @@ def nr_str(v) -> str:
     return s(v)
 
 
-def read_controls(wb) -> list[dict]:
+def read_controls(wb, sheets: list[str] | None = None) -> list[dict]:
     out = []
-    for name in L.CONTROL_SHEETS:
+    if sheets:
+        unknown = [x for x in sheets if x not in L.CONTROL_SHEETS]
+        if unknown:
+            raise ValueError(f"not a control sheet: {', '.join(unknown)} (expected: {', '.join(L.CONTROL_SHEETS)})")
+    for name in sheets or L.CONTROL_SHEETS:
         if name not in wb.sheetnames:
             continue
         ws = wb[name]
