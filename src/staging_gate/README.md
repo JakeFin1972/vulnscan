@@ -4,6 +4,7 @@ Python port of the staging → approve → apply workflow for the CISO steering 
 (`ApplyApproved.ts`, `LockDown.ts`, `ImportRisksFromJSON.ts`), plus an H2/H3 runner.
 Layout constants live in `layout.py`; they were checked against `Test-version36-17Aug-BoardCyberShield.xlsx`.
 
+    python -m staging_gate serve        scratch.xlsx --open     # local web app on http://localhost:8780
     python -m staging_gate lock         wb.xlsx -o scratch.xlsx
     python -m staging_gate apply        wb.xlsx -o scratch.xlsx
     python -m staging_gate import-risks wb.xlsx -o scratch.xlsx
@@ -21,3 +22,11 @@ output matched the JS (stamped markdown byte-identical, Word text identical, ext
 
 Always work on a scratch copy. Saving through openpyxl re-serialises charts and drops cached formula
 values until Excel recalculates. Sheet protection uses Excel's SHA-512 scheme and verifies `LOCK_PW`.
+
+## Local web app
+
+`serve` opens a page on your own machine (127.0.0.1 only; Host header and a per-run token are checked):
+Overview (roll-ups, lock status), Staging (approve y / y! / n, add a proposal by hand), Risks, Run H2 / H3,
+ChangeLog. Every apply saves the workbook through one lock and makes a backup copy
+(`<name>.pre-webapp.xlsx`) the first time. Close Excel on the file first; the page warns if it sees
+Excel's `~$` lock file. Needs only `openpyxl` (plus `anthropic` for the Run tab).

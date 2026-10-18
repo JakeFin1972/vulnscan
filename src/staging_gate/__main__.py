@@ -5,15 +5,11 @@ from pathlib import Path
 
 from . import layout as L
 from .apply import apply_approved
-from .controls import read_controls
-from .evidence import load_register
-from .guard import guard_h2
-from .h2 import write_staging
 from .lock import lock
 from .risks import import_risks
 from .rollup import rollup
-from .runner import (DEFAULT_MODEL, call_model, existing_risk_names, extract_system_prompt,
-                     first_json, h2_user_prompt, h3_user_prompt)
+from .pipeline import run_h2, run_h3
+from .runner import DEFAULT_MODEL
 from .xl import open_wb
 
 
@@ -31,6 +27,9 @@ def _model_args(s):
 
 
 def _review_cmds(sub):
+    s = sub.add_parser("serve", help="open the local web app for a workbook")
+    s.add_argument("workbook"), s.add_argument("--port", type=int, default=8780)
+    s.add_argument("--open", action="store_true", help="open the browser")
     s = sub.add_parser("profile-docx", help="render the profile markdown to a Word review copy (or --stamp IDs)")
     s.add_argument("input")
     s.add_argument("--out"), s.add_argument("--config")
@@ -70,6 +69,10 @@ def main(argv=None):
             s.add_argument("--h3-prompt", help="the H3 .md file (its '## System prompt (vX.Y)' block replaces the Prompts sheet cell)")
             s.add_argument("--no-dropdown", action="store_true")
     a = p.parse_args(argv)
+    if a.cmd == "serve":
+        from .webapp import serve
+        serve(a.workbook, a.port, a.open)
+        return 0
     if a.cmd == "profile-docx":
         from . import profile_review
         return profile_review.run(vars(a))
@@ -97,17 +100,10 @@ def main(argv=None):
             for why in rej:
                 print(f"  - {why}")
         elif a.cmd == "h2":
-            profile = Path(a.profile).read_text(encoding="utf-8")
-            reg_text = Path(a.evidence).read_text(encoding="utf-8")
-            system = extract_system_prompt(Path(a.prompt).read_text(encoding="utf-8"))
-            controls = read_controls(wb, a.sheets)
-            out = call_model(_client(), system, h2_user_prompt(profile, reg_text, controls),
-                             a.model, not a.no_fallbacks)
-            result, notes = guard_h2(first_json(out, "{"), controls, load_register(a.evidence))
-            n = write_staging(wb, result)
+            n, result = run_h2(wb, a.prompt, a.profile, a.evidence, a.sheets, a.model, not a.no_fallbacks)
             print(f"{n} proposals written to Staging; {len(result['not_scored'])} not scored; "
-                  f"{len(notes)} guard changes")
-            for x in notes:
+                  f"{len(result['guard_notes'])} guard changes")
+            for x in result["guard_notes"]:
                 print("  guard:", x)
         elif a.cmd == "fix-workbook":
             from .fixes import fix_workbook
@@ -118,11 +114,7 @@ def main(argv=None):
             for x in res.skipped:
                 print("skipped:", x)
         elif a.cmd == "h3":
-            profile = Path(a.profile).read_text(encoding="utf-8")
-            system = extract_system_prompt(Path(a.prompt).read_text(encoding="utf-8"))
-            out = call_model(_client(), system, h3_user_prompt(profile, read_controls(wb, a.sheets), existing_risk_names(wb)),
-                             a.model, not a.no_fallbacks)
-            n, rej = import_risks(wb, json.dumps(first_json(out, "[")))
+            n, rej = run_h3(wb, a.prompt, a.profile, a.sheets, a.model, not a.no_fallbacks)
             print(f"Risks imported: {n} | rejected: {len(rej)}")
             for why in rej:
                 print(f"  - {why}")

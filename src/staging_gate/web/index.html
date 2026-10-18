@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Staging gate</title>
+<style>
+  :root { --bg:#0b1020; --panel:#121a2e; --line:#243050; --text:#e6e9f2; --muted:#8b95b0; --accent:#2dd4bf;
+          --warn:#f5b84b; --bad:#f87171; --good:#4ade80; --input:#0b1224; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f5f6fa; --panel:#fff; --line:#d9deea; --text:#1b2236;
+          --muted:#5b6580; --accent:#0f9488; --warn:#b7791f; --bad:#c53030; --good:#2f855a; --input:#fff; } }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif; }
+  header { padding:14px 24px; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:12px 24px; align-items:center; }
+  h1 { font-size:17px; margin:0; } .path { color:var(--muted); font-size:12px; word-break:break-all; }
+  .chips { display:flex; gap:8px; flex-wrap:wrap; margin-left:auto; }
+  .chip { border:1px solid var(--line); border-radius:999px; padding:2px 10px; font-size:12px; color:var(--muted); }
+  .chip.ok { color:var(--good); border-color:var(--good); } .chip.warn { color:var(--warn); border-color:var(--warn); }
+  .chip.bad { color:var(--bad); border-color:var(--bad); }
+  nav { display:flex; gap:4px; padding:0 24px; border-bottom:1px solid var(--line); overflow-x:auto; }
+  nav button { background:none; border:0; border-bottom:2px solid transparent; color:var(--muted); padding:12px 14px; cursor:pointer; font:inherit; }
+  nav button.on { color:var(--text); border-color:var(--accent); }
+  main { padding:20px 24px 60px; max-width:1400px; }
+  .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:16px; }
+  .bar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px; }
+  button.btn { background:var(--accent); color:#04201c; border:0; border-radius:7px; padding:7px 14px; font:inherit; font-weight:600; cursor:pointer; }
+  button.btn.sec { background:transparent; color:var(--text); border:1px solid var(--line); font-weight:500; }
+  button.btn:disabled { opacity:.45; cursor:not-allowed; }
+  table { width:100%; border-collapse:collapse; } th,td { text-align:left; padding:7px 8px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:500; font-size:12px; white-space:nowrap; }
+  tr.detail td { background:var(--input); color:var(--muted); font-size:13px; white-space:pre-wrap; }
+  tr.changed td:first-child { box-shadow:inset 3px 0 var(--warn); }
+  select, input, textarea { background:var(--input); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px; font:inherit; }
+  input[type=text] { width:100%; }
+  .num { text-align:right; font-variant-numeric:tabular-nums; } .muted { color:var(--muted); } .small { font-size:12px; }
+  .msg { border-left:3px solid var(--accent); padding:8px 12px; background:var(--input); border-radius:4px; margin-bottom:14px; white-space:pre-wrap; }
+  .msg.err { border-color:var(--bad); color:var(--bad); } .msg.warn { border-color:var(--warn); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }
+  label { display:block; font-size:12px; color:var(--muted); margin:8px 0 3px; }
+  .stamp { color:var(--good); font-size:12px; } .stamp.partial { color:var(--warn); }
+  .tag { display:inline-block; font-size:11px; border:1px solid var(--line); border-radius:4px; padding:0 5px; color:var(--muted); }
+  details summary { cursor:pointer; color:var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <div><h1>Staging gate</h1><div class="path" id="path"></div></div>
+  <div class="chips" id="chips"></div>
+</header>
+<nav id="tabs"></nav>
+<main>
+  <div id="msg"></div>
+  <div id="view"></div>
+</main>
+<script>
+const TOKEN = "__TOKEN__";
+const $ = (s) => document.querySelector(s);
+let S = null, tab = "Overview";
+const pending = {}, pendingRisk = {};
+const TABS = ["Overview", "Staging", "Risks", "Run H2 / H3", "ChangeLog"];
+
+function h(tag, attrs, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") e.className = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+    else if (v === true) e.setAttribute(k, ""); else if (v !== false && v != null) e.setAttribute(k, v);
+  }
+  for (const k of kids.flat()) if (k != null) e.append(k.nodeType ? k : document.createTextNode(String(k)));
+  return e;
+}
+async function api(path, body) {
+  const r = await fetch(path, { method: body === undefined ? "GET" : "POST",
+    headers: { "X-Token": TOKEN, "Content-Type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const j = await r.json().catch(() => ({ error: "bad response" }));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+function say(text, kind) { const m = $("#msg"); m.replaceChildren(text ? h("div", { class: "msg " + (kind || "") }, text) : ""); }
+async function act(fn) {
+  say("Working… (saving the workbook can take a few seconds)");
+  document.querySelectorAll("button.btn").forEach(b => b.disabled = true);
+  try { const msg = await fn(); await load(); say(msg); }
+  catch (e) { say(e.message, "err"); document.querySelectorAll("button.btn").forEach(b => b.disabled = false); }
+}
+async function load() {
+  try { S = await api("/api/state"); } catch (e) { say("Could not read the workbook: " + e.message, "err"); return; }
+  render();
+}
+function chips() {
+  const nl = Object.values(S.locked).filter(Boolean).length, nt = Object.keys(S.locked).length;
+  $("#path").textContent = S.path;
+  $("#chips").replaceChildren(
+    h("span", { class: "chip " + (nl === nt ? "ok" : "warn") }, `${nl}/${nt} sheets locked`),
+    h("span", { class: "chip " + (S.passwordOk ? "ok" : "bad") }, S.passwordOk ? "lock password OK" : "lock password MISMATCH"),
+    h("span", { class: "chip " + (S.apiKey ? "ok" : "warn") }, S.apiKey ? "API key set" : "no ANTHROPIC_API_KEY in env"),
+    ...(S.excelOpen ? [h("span", { class: "chip bad" }, "Excel has this file open")] : []));
+}
+function render() {
+  chips();
+  $("#tabs").replaceChildren(...TABS.map(t => h("button", { class: t === tab ? "on" : "", onclick: () => { tab = t; render(); } }, t)));
+  const v = { "Overview": overview, "Staging": staging, "Risks": risks, "Run H2 / H3": run, "ChangeLog": changelog }[tab]();
+  $("#view").replaceChildren(v);
+}
+
+function overview() {
+  const rows = [];
+  for (const [sheet, cols] of Object.entries(S.rollups)) {
+    const n = cols.K.length;
+    for (let i = 0; i < n; i++) {
+      const k = cols.K[i];
+      rows.push(h("tr", {}, h("td", {}, i === 0 ? sheet : ""), h("td", {}, `rows ${k.first}–${k.last}`),
+        h("td", { class: "num" }, k.n || "—"),
+        h("td", { class: "num" }, k.n ? k.value.toFixed(2) : "—"), h("td", { class: "num" }, k.n ? cols.L[i].value.toFixed(2) : "—"),
+        h("td", { class: "num" }, k.n ? cols.M[i].value.toFixed(2) : "—")));
+    }
+  }
+  const pend = S.staging.filter(r => !r.applied).length;
+  return h("div", {},
+    h("div", { class: "grid" },
+      h("div", { class: "panel" }, h("div", { class: "muted small" }, "Control proposals in Staging"), h("div", { style: "font-size:26px" }, S.staging.length),
+        h("div", { class: "small muted" }, `${pend} not yet applied`)),
+      h("div", { class: "panel" }, h("div", { class: "muted small" }, "Risk proposals in Staging-Risks"), h("div", { style: "font-size:26px" }, S.risks.length),
+        h("div", { class: "small muted" }, `${S.risks.filter(r => !r.applied).length} not yet applied`)),
+      h("div", { class: "panel" }, h("div", { class: "muted small" }, "Live sheets"), h("div", { class: "bar" },
+        h("button", { class: "btn sec", onclick: () => act(async () => (await api("/api/lock", {})).message) }, "Lock all live sheets")),
+        h("div", { class: "small muted" }, "Re-applies protection; apply does this automatically."))),
+    h("div", { class: "panel" },
+      h("h3", { style: "margin-top:0" }, "Category roll-up (criticality-weighted, unmeasured rows excluded)"),
+      h("div", { class: "small muted" }, "S = initial maturity, T = phase 1 target, U = final target. Reproduces the workbook's K/L/M formulas; Excel remains authoritative."),
+      h("table", {}, h("thead", {}, h("tr", {}, ...["Sheet", "Category block", "Measured", "S", "T", "U"].map((x, i) => h("th", { class: i > 1 ? "num" : "" }, x)))), h("tbody", {}, rows))));
+}
+
+function approveSelect(map, row, current, opts) {
+  const val = row in map ? map[row] : current;
+  const sel = h("select", { onchange: (e) => { map[row] = e.target.value; e.target.closest("tr").classList.toggle("changed", map[row] !== current); count(); } },
+    ...opts.map(o => h("option", { value: o, selected: o === val }, o || "—")));
+  return sel;
+}
+function stampEl(t) { return t ? h("span", { class: "stamp " + (t.includes("partial") ? "partial" : "") }, t) : ""; }
+function count() {
+  const c = $("#cnt"); if (!c) return;
+  const all = { ...Object.fromEntries(S.staging.map(r => [r.row, r.approve])), ...pending };
+  const v = Object.values(all);
+  c.textContent = `${v.filter(x => x === "y").length} y · ${v.filter(x => x === "y!").length} y! · ${v.filter(x => x === "n").length} n`;
+}
+async function commit(applyNow) {
+  const body = { approvals: pending, riskApprovals: pendingRisk, applyNow };
+  if (applyNow) {
+    const ys = Object.values({ ...Object.fromEntries(S.staging.map(r => [r.row, r.approve])), ...pending }).filter(x => x === "y" || x === "y!").length;
+    if (!confirm(`Apply approved rows now? (${ys} control row(s) marked y or y!, plus any approved risks.)\nThe workbook will be saved; a backup copy is made first.`)) return;
+  }
+  await act(async () => {
+    const r = await api("/api/apply", body);
+    for (const k of Object.keys(pending)) delete pending[k];
+    for (const k of Object.keys(pendingRisk)) delete pendingRisk[k];
+    return r.message;
+  });
+}
+function staging() {
+  const body = [];
+  for (const r of S.staging) {
+    const open = h("tr", { class: "detail", hidden: true }, h("td", { colspan: 11 },
+      `Proposed current state (F):\n${r.F || "—"}\n\nProposed next step (G):\n${r.G || "—"}\n\nCurrent F in workbook:\n${r.curF || "—"}\n\nRationale / guard flags:\n${r.rationale || "—"}`));
+    body.push(h("tr", { class: r.row in pending && pending[r.row] !== r.approve ? "changed" : "" },
+      h("td", {}, approveSelect(pending, r.row, r.approve, ["", "y", "n", "y!"])),
+      h("td", {}, r.sheet), h("td", {}, r.nr), h("td", {}, r.topic),
+      h("td", { class: "num" }, r.S ?? ""), h("td", { class: "num" }, r.T ?? ""), h("td", { class: "num" }, r.U ?? ""),
+      h("td", { class: "num muted" }, r.curS ?? ""), h("td", { class: "small" }, r.evidence, " ", r.confidence ? h("span", { class: "tag" }, r.confidence) : ""),
+      h("td", {}, stampEl(r.applied)),
+      h("td", {}, h("button", { class: "btn sec", onclick: () => { open.hidden = !open.hidden; } }, "details"))));
+    body.push(open);
+  }
+  const f = {};
+  const field = (k, label, w) => h("div", { style: w ? `grid-column:span ${w}` : "" }, h("label", {}, label), h("input", { type: "text", oninput: (e) => f[k] = e.target.value }));
+  const sheetSel = h("select", { onchange: (e) => f.sheet = e.target.value }, h("option", { value: "" }, "choose…"), ...S.controlSheets.map(x => h("option", { value: x }, x)));
+  const confSel = h("select", { onchange: (e) => f.confidence = e.target.value }, ...["", "high", "medium", "low"].map(x => h("option", { value: x }, x || "—")));
+  return h("div", {},
+    h("div", { class: "bar" },
+      h("button", { class: "btn sec", onclick: () => commit(false) }, "Save approvals"),
+      h("button", { class: "btn", onclick: () => commit(true) }, "Apply approved"),
+      h("span", { class: "muted small", id: "cnt" }),
+      h("span", { class: "muted small" }, "y = apply if no human text would be overwritten · y! = deliberate override · n = decline")),
+    h("div", { class: "panel", style: "overflow-x:auto" },
+      S.staging.length ? h("table", {}, h("thead", {}, h("tr", {}, ...["Approve", "Sheet", "nr", "Topic", "Prop. S", "T", "U", "Current S", "Evidence", "Applied", ""].map(x => h("th", {}, x)))), h("tbody", {}, body))
+        : h("div", { class: "muted" }, "Staging is empty. Run H2 or add a proposal below.")),
+    h("details", { class: "panel" }, h("summary", {}, "Add a proposal by hand"),
+      h("div", { class: "grid" }, h("div", {}, h("label", {}, "Sheet"), sheetSel), field("nr", "nr"),
+        field("S", "Proposed S (0–5)"), field("T", "Proposed T"), field("U", "Proposed U"),
+        h("div", {}, h("label", {}, "Confidence"), confSel), field("evidence", "Evidence IDs"),
+        field("F", "Proposed current state (F)", 2), field("G", "Proposed next step (G)", 2)),
+      h("div", { class: "bar", style: "margin-top:12px" }, h("button", { class: "btn", onclick: () => act(async () => (await api("/api/stage", f)).message) }, "Add to Staging"))));
+  
+}
+function risks() {
+  const body = [];
+  for (const r of S.risks) {
+    const open = h("tr", { class: "detail", hidden: true }, h("td", { colspan: 9 },
+      `Description:\n${r.description}\n\nCurrent state:\n${r.current}\n\nTarget state:\n${r.target}\n\nAction:\n${r.action}\n\nSource rows: ${r.source_rows}\n\nBasis / evidence:\n${r.basis}`));
+    body.push(h("tr", {}, h("td", {}, approveSelect(pendingRisk, r.row, r.approve, ["", "y", "n"])),
+      h("td", {}, r.name), h("td", {}, r.category), h("td", {}, r.risk), h("td", {}, r.impact), h("td", {}, r.easiness),
+      h("td", {}, r.owner), h("td", {}, stampEl(r.applied)),
+      h("td", {}, h("button", { class: "btn sec", onclick: () => { open.hidden = !open.hidden; } }, "details"))));
+    body.push(open);
+  }
+  return h("div", {}, h("div", { class: "bar" },
+      h("button", { class: "btn sec", onclick: () => commit(false) }, "Save approvals"),
+      h("button", { class: "btn", onclick: () => commit(true) }, "Apply approved"),
+      h("span", { class: "muted small" }, "Applied risks land on 8. Risks; PRIO, costs and status stay empty for you to fill.")),
+    h("div", { class: "panel", style: "overflow-x:auto" }, S.risks.length
+      ? h("table", {}, h("thead", {}, h("tr", {}, ...["Approve", "Risk", "NIST category", "RISK", "User impact", "Easiness", "Owner", "Applied", ""].map(x => h("th", {}, x)))), h("tbody", {}, body))
+      : h("div", { class: "muted" }, "No risk proposals yet. Run H3.")));
+}
+
+const saved = JSON.parse(localStorage.getItem("sg_run") || "{}");
+let jobTimer = null;
+function run() {
+  const f = { prompt: saved.prompt || "", profile: saved.profile || "", evidence: saved.evidence || "", model: saved.model || S.defaultModel,
+    sheets: saved.sheets || ["4. DETECT"], fallbacks: saved.fallbacks !== false };
+  const persist = () => localStorage.setItem("sg_run", JSON.stringify(f));
+  const txt = (k, label, ph) => h("div", {}, h("label", {}, label), h("input", { type: "text", value: f[k], placeholder: ph || "", oninput: (e) => { f[k] = e.target.value; persist(); } }));
+  const status = h("div", { id: "job" });
+  const start = async (kind) => {
+    try { await api("/api/" + kind, f); say(""); poll(status); } catch (e) { say(e.message, "err"); }
+  };
+  return h("div", {},
+    h("div", { class: "panel" }, h("h3", { style: "margin-top:0" }, "Run a helper against the workbook"),
+      h("div", { class: "small muted" }, "Paths are on this computer. The profile and control rows are sent to the Anthropic API. H2 proposals pass the evidence-ceiling guard and land in Staging for you to approve."),
+      h("div", { class: "grid" }, txt("prompt", "H2 / H3 prompt file (.md with “## System prompt”)", "~/…/02_H2_current-state-and-maturity.md"),
+        txt("profile", "Approved company profile (.md)"), txt("evidence", "Evidence register (.csv, or the profile .md for the dummy test) — H2 only"), txt("model", "Model")),
+      h("label", {}, "Control sheets to include"),
+      h("div", { class: "bar" }, ...S.controlSheets.map(sh => h("label", { style: "display:inline-flex;gap:5px;margin:0;color:var(--text)" },
+        h("input", { type: "checkbox", checked: f.sheets.includes(sh), onchange: (e) => { f.sheets = e.target.checked ? [...f.sheets, sh] : f.sheets.filter(x => x !== sh); persist(); } }), sh))),
+      h("label", { style: "display:flex;gap:6px;align-items:center;color:var(--text)" },
+        h("input", { type: "checkbox", checked: f.fallbacks, onchange: (e) => { f.fallbacks = e.target.checked; persist(); } }), "Use refusal fallback"),
+      h("div", { class: "bar", style: "margin-top:12px" },
+        h("button", { class: "btn", onclick: () => start("h2") }, "Run H2 (control proposals)"),
+        h("button", { class: "btn sec", onclick: () => start("h3") }, "Run H3 (risk proposals)"))),
+    status);
+}
+function poll(el) {
+  clearInterval(jobTimer);
+  const tick = async () => {
+    const j = await api("/api/job"); const box = $("#job") || el;
+    if (j.state === "running") { box.replaceChildren(h("div", { class: "msg" }, `Running ${j.name.toUpperCase()}… this can take a few minutes.`)); return; }
+    clearInterval(jobTimer);
+    if (j.state === "error") box.replaceChildren(h("div", { class: "msg err" }, j.error));
+    else if (j.state === "done") { box.replaceChildren(h("div", { class: "msg" }, j.message), j.notes && j.notes.length ? h("div", { class: "panel" }, h("b", {}, "Guard changes / rejections"), h("ul", {}, ...j.notes.map(n => h("li", {}, n)))) : ""); load(); }
+  };
+  tick(); jobTimer = setInterval(tick, 2000);
+}
+function changelog() {
+  return h("div", { class: "panel", style: "overflow-x:auto" }, h("div", { class: "muted small" }, "Newest first. Written by the apply step; never edit by hand."),
+    h("table", {}, h("thead", {}, h("tr", {}, ...["Time", "Source", "Sheet", "nr / row", "Col", "Old", "New", "Evidence", "Conf.", "Prompts", "Result"].map(x => h("th", {}, x)))),
+      h("tbody", {}, ...S.changelog.map(r => h("tr", {}, ...r.map((c, i) => h("td", { class: i === 10 && /CONFLICT|REJECT|NOT FOUND/.test(c) ? "stamp partial" : "small" }, c.length > 60 ? c.slice(0, 57) + "…" : c)))))));
+}
+load();
+</script>
+</body>
+</html>
